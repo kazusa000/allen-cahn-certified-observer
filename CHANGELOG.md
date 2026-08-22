@@ -20,3 +20,5 @@
 - Added the R5 ablation matrix runner for fixed-gain, state-conditioning, certificate, direction,
   and bounded-gate factors.
 - Recorded the completed 2060 R5 ablation sweep and its certificate/online-coupling conclusion.
+- Added the T--K-style R5 joint trainer that optimizes the discrete stable-target loss through both
+  the state-conditioned certificate and the deployable gain network.
