@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/allen_cahn_certified_observer/__init__.py
+src/allen_cahn_certified_observer/grid.py
+src/allen_cahn_certified_observer/observations.py
+src/allen_cahn_certified_observer/observer.py
+src/allen_cahn_certified_observer/solver.py
+src/allen_cahn_certified_observer.egg-info/PKG-INFO
+src/allen_cahn_certified_observer.egg-info/SOURCES.txt
+src/allen_cahn_certified_observer.egg-info/dependency_links.txt
+src/allen_cahn_certified_observer.egg-info/requires.txt
+src/allen_cahn_certified_observer.egg-info/top_level.txt
