@@ -53,4 +53,5 @@ def test_causal_rollout_is_reproducible_and_finite() -> None:
     assert np.array_equal(first.truth, second.truth)
     assert np.array_equal(first.estimate, second.estimate)
     assert np.all(np.isfinite(first.error_mass_norm))
+    assert np.isclose(first.error_mass_norm[0], 0.1 / np.sqrt(2.0), atol=2e-3)
     assert np.max(first.error_mass_norm) > 0.0

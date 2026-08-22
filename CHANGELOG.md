@@ -12,3 +12,4 @@
 - Added the R5-C offline certificate interface and fiber/direction/local-invertibility audit.
 - Added the R5 pilot formal contract for state/error domains, grids, splits, noise, and compute gates.
 - Corrected causal nudging to use the physical mass-adjoint observation injection for cross-grid comparability.
+- Added deterministic R5 pilot case generation and an exploratory local baseline sweep tool.

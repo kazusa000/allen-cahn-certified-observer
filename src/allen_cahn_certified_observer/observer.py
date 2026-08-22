@@ -71,7 +71,8 @@ class ObserverRollout:
 
     @property
     def error_mass_norm(self) -> np.ndarray:
-        return np.sqrt(np.sum(self.error**2, axis=1))
+        mass_step = 1.0 / (self.error.shape[1] + 1)
+        return np.sqrt(np.sum(self.error**2, axis=1) * mass_step)
 
 
 def simulate_causal_nudging(

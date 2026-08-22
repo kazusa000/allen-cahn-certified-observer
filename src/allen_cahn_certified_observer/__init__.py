@@ -6,6 +6,7 @@ from .certificate import (
     NullspaceCertificate,
     audit_certificate,
 )
+from .dataset import PilotCase, generate_pilot_cases, noise_waveform
 from .grid import AllenCahnGrid
 from .linearization import (
     allen_cahn_jacobian,
@@ -29,13 +30,16 @@ __all__ = [
     "IdentityCertificate",
     "NullspaceCertificate",
     "ObserverRollout",
+    "PilotCase",
     "allen_cahn_energy",
     "allen_cahn_jacobian",
     "allen_cahn_rhs",
     "audit_certificate",
+    "generate_pilot_cases",
     "incremental_remainder",
     "local_average_matrix",
     "local_incremental_rhs",
+    "noise_waveform",
     "simulate_causal_nudging",
     "solve_allen_cahn",
 ]
