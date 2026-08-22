@@ -8,6 +8,11 @@ dependencies = [
   "scipy>=1.11",
 ]
 
+[project.optional-dependencies]
+gpu = [
+  "torch>=2.4",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

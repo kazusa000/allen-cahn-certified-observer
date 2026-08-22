@@ -15,3 +15,4 @@
 - Added deterministic R5 pilot case generation and an exploratory local baseline sweep tool.
 - Added the CPU-only causal state-conditioned linear residual correction fit for R5-D, with a fixed physical-gain safeguard.
 - Added the reproducible held-out R5-D smoke runner with physical-error, energy-defect, and measurement-noise diagnostics.
+- Added the optional PyTorch R5-E joint correction/certificate GPU pilot runner.
