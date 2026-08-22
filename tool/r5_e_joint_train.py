@@ -303,6 +303,70 @@ def _median(records: list[dict[str, float | int]], key: str) -> float:
     return float(np.median([record[key] for record in records]))
 
 
+def _rollout_summary(
+    rollout: object, grid: AllenCahnGrid, nu: float
+) -> dict[str, float | int]:
+    error = rollout.error_mass_norm
+    energies = np.asarray(
+        [allen_cahn_energy(grid, nu, state) for state in rollout.estimate]
+    )
+    return {
+        "solver_status": int(rollout.solver_status),
+        "terminal_error_mass": float(error[-1]),
+        "peak_error_mass": float(np.max(error)),
+        "energy_defect": float(
+            max(0.0, np.max(np.diff(energies, prepend=energies[0])))
+        ),
+    }
+
+
+def _certificate_diagnostics(
+    torch: object,
+    certificate: object,
+    matrix: np.ndarray,
+    sample_set: SampleSet,
+    device: str,
+    *,
+    sample_limit: int = 3,
+) -> dict[str, float | int]:
+    count = min(sample_limit, sample_set.states.shape[0])
+    states = torch.as_tensor(
+        sample_set.states[:count], dtype=torch.float32, device=device
+    )
+    errors = torch.as_tensor(
+        sample_set.errors[:count], dtype=torch.float32, device=device
+    )
+    with torch.no_grad():
+        transformed = certificate(states, errors).detach().cpu().numpy()
+        zero = certificate(states, torch.zeros_like(errors)).detach().cpu().numpy()
+    direction_residual = np.linalg.norm(
+        (transformed - sample_set.errors[:count]) @ matrix.T, axis=1
+    )
+    minimum_singular: list[float] = []
+    maximum_singular: list[float] = []
+    for index in range(count):
+        state = states[index].detach()
+        error = errors[index].detach().requires_grad_(True)
+        jacobian = torch.autograd.functional.jacobian(
+            lambda value, state=state: certificate(state[None, :], value[None, :])[0],
+            error,
+        )
+        singular_values = np.linalg.svd(
+            jacobian.detach().cpu().numpy(), compute_uv=False
+        )
+        minimum_singular.append(float(np.min(singular_values)))
+        maximum_singular.append(float(np.max(singular_values)))
+    return {
+        "certificate_audit_sample_count": count,
+        "certificate_max_zero_fiber_residual": float(
+            np.max(np.linalg.norm(zero, axis=1))
+        ),
+        "certificate_max_direction_residual": float(np.max(direction_residual)),
+        "certificate_min_jacobian_singular_value": min(minimum_singular),
+        "certificate_max_jacobian_singular_value": max(maximum_singular),
+    }
+
+
 def run(
     torch: object,
     grid_sizes: list[int],
@@ -311,6 +375,9 @@ def run(
     epochs: int,
     batch_size: int,
     device: str,
+    output_path: Path,
+    rollout_limit: int,
+    test_limit: int,
 ) -> dict[str, object]:
     results: list[dict[str, object]] = []
     for grid_size in grid_sizes:
@@ -319,6 +386,8 @@ def run(
         train = _collect_samples(_split_cases("train", grid_size), grid, matrix)
         validation_cases = _split_cases("validation", grid_size)
         test_cases = _split_cases("test", grid_size)
+        validation = _collect_samples(validation_cases, grid, matrix)
+        validation_rollout_cases = validation_cases[:rollout_limit]
         grid_result: dict[str, object] = {
             "grid_size": grid_size,
             "train_case_count": len(_split_cases("train", grid_size)),
@@ -327,6 +396,7 @@ def run(
             "training_sample_count": int(train.features.shape[0]),
             "seed_results": [],
         }
+        trained_models: dict[int, object] = {}
         for seed in seeds:
             correction, _certificate, losses = _train_one(
                 torch,
@@ -339,10 +409,6 @@ def run(
                 device=device,
             )
             with torch.no_grad():
-                features = torch.as_tensor(
-                    train.features, dtype=torch.float32, device=device
-                )
-                validation = _collect_samples(validation_cases, grid, matrix)
                 validation_features = torch.as_tensor(
                     validation.features, dtype=torch.float32, device=device
                 )
@@ -354,7 +420,6 @@ def run(
                         correction(validation_features), validation_targets
                     ).item()
                 )
-                del features
             rollout_records = [
                 _simulate_neural(
                     torch,
@@ -366,8 +431,11 @@ def run(
                     case.initial_truth(grid),
                     case.initial_estimate(grid),
                 )
-                for case in validation_cases[:12]
+                for case in validation_rollout_cases
             ]
+            certificate_diagnostics = _certificate_diagnostics(
+                torch, _certificate, matrix, train, device
+            )
             result = {
                 "seed": seed,
                 **losses,
@@ -382,10 +450,52 @@ def run(
                 "validation_rollout_median_energy_defect": _median(
                     rollout_records, "energy_defect"
                 ),
+                **certificate_diagnostics,
                 "certificate_family": "nullspace-gated neural certificate",
                 "certificate_fiber_constraint": "exact by construction up to floating point",
             }
             grid_result["seed_results"].append(result)
+            trained_models[seed] = correction
+            torch.save(
+                {
+                    "grid_size": grid_size,
+                    "seed": seed,
+                    "observation_matrix": matrix,
+                    "correction_state_dict": correction.state_dict(),
+                    "certificate_state_dict": _certificate.state_dict(),
+                },
+                output_path.parent / f"checkpoint-grid-{grid_size}-seed-{seed}.pt",
+            )
+        best_seed_result = min(
+            grid_result["seed_results"],
+            key=lambda item: item["correction_validation_mse"],
+        )
+        best_seed = int(best_seed_result["seed"])
+        best_model = trained_models[best_seed]
+        test_rollouts = [
+            _simulate_neural(
+                torch,
+                best_model,
+                device,
+                grid,
+                matrix,
+                case.nu,
+                case.initial_truth(grid),
+                case.initial_estimate(grid),
+            )
+            for case in test_cases[:test_limit]
+        ]
+        grid_result["selected_seed"] = best_seed
+        grid_result["test_rollout_case_count"] = len(test_rollouts)
+        grid_result["test_rollout_median_terminal_error_mass"] = _median(
+            test_rollouts, "terminal_error_mass"
+        )
+        grid_result["test_rollout_median_peak_error_mass"] = _median(
+            test_rollouts, "peak_error_mass"
+        )
+        grid_result["test_rollout_median_energy_defect"] = _median(
+            test_rollouts, "energy_defect"
+        )
         results.append(grid_result)
     return {
         "kind": "r5-e-gpu-pilot",
@@ -395,6 +505,8 @@ def run(
         "device": device,
         "epochs": epochs,
         "batch_size": batch_size,
+        "validation_rollout_limit": rollout_limit,
+        "test_rollout_limit": test_limit,
     }
 
 
@@ -405,12 +517,15 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--rollout-limit", type=int, default=48)
+    parser.add_argument("--test-limit", type=int, default=48)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     import torch
 
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise SystemExit("CUDA requested but torch.cuda.is_available() is false")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     result = run(
         torch,
         args.grid_sizes,
@@ -418,8 +533,10 @@ def main() -> None:
         epochs=args.epochs,
         batch_size=args.batch_size,
         device=args.device,
+        output_path=args.output,
+        rollout_limit=args.rollout_limit,
+        test_limit=args.test_limit,
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(
         json.dumps({"grid_count": len(result["grid_results"]), "device": args.device})
