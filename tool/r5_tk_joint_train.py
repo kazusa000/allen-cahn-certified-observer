@@ -40,6 +40,31 @@ class JointSampleSet:
 ABLATION_SEEDS = (501, 502, 503, 504)
 
 
+def _assemble_sample_set(
+    states: list[np.ndarray],
+    estimates: list[np.ndarray],
+    measurements: list[np.ndarray],
+    next_states: list[np.ndarray],
+    nus: list[float],
+    *,
+    dt: float,
+) -> JointSampleSet:
+    nu_array = np.asarray(nus, dtype=float)
+    nu_values = tuple(sorted({float(value) for value in nu_array}))
+    nu_lookup = {value: index for index, value in enumerate(nu_values)}
+    nu_indices = np.asarray([nu_lookup[float(value)] for value in nu_array], dtype=int)
+    return JointSampleSet(
+        states=np.asarray(states, dtype=float),
+        estimates=np.asarray(estimates, dtype=float),
+        measurements=np.asarray(measurements, dtype=float),
+        next_states=np.asarray(next_states, dtype=float),
+        nus=nu_array,
+        nu_indices=nu_indices,
+        nu_values=nu_values,
+        dt=dt,
+    )
+
+
 def _split_cases(split: str, grid_size: int) -> list[object]:
     return [
         case
@@ -73,18 +98,12 @@ def _collect_samples(
         measurements.extend(rollout.measurements[:-1])
         next_states.extend(rollout.truth[1:])
         nus.extend([case.nu] * (OUTPUT_TIMES.size - 1))
-    nu_array = np.asarray(nus, dtype=float)
-    nu_values = tuple(sorted({float(value) for value in nu_array}))
-    nu_lookup = {value: index for index, value in enumerate(nu_values)}
-    nu_indices = np.asarray([nu_lookup[float(value)] for value in nu_array], dtype=int)
-    return JointSampleSet(
-        states=np.asarray(states, dtype=float),
-        estimates=np.asarray(estimates, dtype=float),
-        measurements=np.asarray(measurements, dtype=float),
-        next_states=np.asarray(next_states, dtype=float),
-        nus=nu_array,
-        nu_indices=nu_indices,
-        nu_values=nu_values,
+    return _assemble_sample_set(
+        states,
+        estimates,
+        measurements,
+        next_states,
+        nus,
         dt=dt,
     )
 
@@ -113,6 +132,120 @@ def _feature_tensor(
     return features, innovations
 
 
+def _feature_numpy(
+    grid: AllenCahnGrid,
+    matrix: np.ndarray,
+    estimate: np.ndarray,
+    measurement: np.ndarray,
+    nu: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    innovation = measurement - matrix @ estimate
+    features = np.concatenate(
+        (
+            estimate,
+            measurement,
+            innovation,
+            np.asarray([(nu - 0.01) / 0.01]),
+            np.asarray([np.sqrt(grid.h * np.dot(estimate, estimate))]),
+        )
+    )
+    return features, innovation
+
+
+def _policy_rollout(
+    torch: object,
+    gain: object,
+    device: str,
+    grid: AllenCahnGrid,
+    matrix: np.ndarray,
+    case: object,
+    *,
+    noise: object = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    n = grid.n
+
+    def rhs(time: float, combined: np.ndarray) -> np.ndarray:
+        truth, estimate = combined[:n], combined[n:]
+        measurement = matrix @ truth
+        if noise is not None:
+            measurement = measurement + noise(float(time))
+        features, innovation = _feature_numpy(
+            grid, matrix, estimate, measurement, case.nu
+        )
+        with torch.no_grad():
+            value = torch.as_tensor(
+                features[None, :], dtype=torch.float32, device=device
+            )
+            gain_value = gain(value)[0].cpu().numpy()
+        correction = gain_value @ innovation
+        return np.concatenate(
+            (
+                allen_cahn_rhs(grid, case.nu, truth),
+                allen_cahn_rhs(grid, case.nu, estimate) + correction,
+            )
+        )
+
+    result = solve_ivp(
+        rhs,
+        (0.0, 1.0),
+        np.concatenate((case.initial_truth(grid), case.initial_estimate(grid))),
+        method="DOP853",
+        t_eval=OUTPUT_TIMES,
+        rtol=1.0e-8,
+        atol=1.0e-10,
+    )
+    trajectories = result.y.T
+    truth = trajectories[:, :n]
+    estimate = trajectories[:, n:]
+    measurements = np.asarray(
+        [
+            matrix @ state
+            + (
+                np.zeros(matrix.shape[0], dtype=float)
+                if noise is None
+                else noise(float(time))
+            )
+            for time, state in zip(result.t, truth, strict=True)
+        ]
+    )
+    return truth, estimate, measurements, int(result.status)
+
+
+def _collect_policy_samples(
+    torch: object,
+    gain: object,
+    device: str,
+    cases: list[object],
+    grid: AllenCahnGrid,
+    matrix: np.ndarray,
+) -> JointSampleSet:
+    states: list[np.ndarray] = []
+    estimates: list[np.ndarray] = []
+    measurements: list[np.ndarray] = []
+    next_states: list[np.ndarray] = []
+    nus: list[float] = []
+    dt = float(OUTPUT_TIMES[1] - OUTPUT_TIMES[0])
+    for case in cases:
+        truth, estimate, observed, status = _policy_rollout(
+            torch, gain, device, grid, matrix, case
+        )
+        if status != 0 or truth.shape[0] != OUTPUT_TIMES.size:
+            raise RuntimeError(f"on-policy rollout failed for {case.case_id}")
+        states.extend(truth[:-1])
+        estimates.extend(estimate[:-1])
+        measurements.extend(observed[:-1])
+        next_states.extend(truth[1:])
+        nus.extend([case.nu] * (OUTPUT_TIMES.size - 1))
+    return _assemble_sample_set(
+        states,
+        estimates,
+        measurements,
+        next_states,
+        nus,
+        dt=dt,
+    )
+
+
 def _allen_cahn_rhs_tensor(
     torch: object, grid: AllenCahnGrid, states: object, nus: object, laplacian: object
 ) -> object:
@@ -128,7 +261,7 @@ def _target_operators(
     generators = []
     maps = []
     for nu in nu_values:
-        linear = nu * grid.laplacian + identity
+        linear = nu * grid.laplacian
         lam = lambda_ratio * nu * np.pi**2
         generator = linear - lam * identity
         generators.append(generator)
@@ -216,6 +349,7 @@ def _joint_loss_components(
     matrix: object,
     indices: object,
     *,
+    stable_normalization: str,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
@@ -245,7 +379,18 @@ def _joint_loss_components(
         -1
     )
     residual = next_transformed - stable_target
-    stable_loss = grid.h * torch.mean(torch.sum(residual**2, dim=1))
+    error_squared_mass = grid.h * torch.sum(errors**2, dim=1)
+    stable_squared_mass = grid.h * torch.sum(residual**2, dim=1)
+    stable_raw_loss = torch.mean(stable_squared_mass)
+    if stable_normalization == "error-time":
+        stable_loss = torch.mean(
+            stable_squared_mass
+            / (samples["dt"] ** 2 * (error_squared_mass + 1.0e-8))
+        )
+    elif stable_normalization == "none":
+        stable_loss = stable_raw_loss
+    else:
+        raise ValueError(f"unknown stable normalization: {stable_normalization}")
 
     def transform(state: object, error: object) -> object:
         return certificate(state, error)
@@ -260,7 +405,6 @@ def _joint_loss_components(
         target_generators[nu_indices], transformed[:, :, None]
     ).squeeze(-1)
     defect_residual = directional - generator
-    error_squared_mass = grid.h * torch.sum(errors**2, dim=1)
     defect_squared_mass = grid.h * torch.sum(defect_residual**2, dim=1)
     defect_loss = torch.mean(defect_squared_mass / (error_squared_mass + 1.0e-8))
 
@@ -276,9 +420,40 @@ def _joint_loss_components(
     )
     return {
         "stable": stable_loss,
+        "stable_raw": stable_raw_loss,
         "defect": defect_loss,
         "bi": bi_loss,
         "total": total_loss,
+    }
+
+
+def _tensorize_samples(
+    torch: object,
+    sample_set: JointSampleSet,
+    grid: AllenCahnGrid,
+    device: str,
+) -> dict[str, object]:
+    return {
+        "states": torch.as_tensor(
+            sample_set.states, dtype=torch.float32, device=device
+        ),
+        "estimates": torch.as_tensor(
+            sample_set.estimates, dtype=torch.float32, device=device
+        ),
+        "measurements": torch.as_tensor(
+            sample_set.measurements, dtype=torch.float32, device=device
+        ),
+        "next_states": torch.as_tensor(
+            sample_set.next_states, dtype=torch.float32, device=device
+        ),
+        "nus": torch.as_tensor(sample_set.nus, dtype=torch.float32, device=device),
+        "nu_indices": torch.as_tensor(
+            sample_set.nu_indices, dtype=torch.long, device=device
+        ),
+        "laplacian": torch.as_tensor(
+            grid.laplacian, dtype=torch.float32, device=device
+        ),
+        "dt": sample_set.dt,
     }
 
 
@@ -287,6 +462,7 @@ def _train_one(
     grid: AllenCahnGrid,
     matrix: np.ndarray,
     train: JointSampleSet,
+    train_cases: list[object],
     *,
     seed: int,
     epochs: int,
@@ -296,11 +472,13 @@ def _train_one(
     gain_scale: float,
     certificate_scale: float,
     lambda_ratio: float,
+    stable_normalization: str,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
     upper_lipschitz: float,
-) -> tuple[object, object, dict[str, float]]:
+    refresh_interval: int,
+) -> tuple[object, object, dict[str, float | int]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(seed)
@@ -316,26 +494,7 @@ def _train_one(
     )
     gain.to(device)
     certificate.to(device)
-    samples = {
-        "states": torch.as_tensor(train.states, dtype=torch.float32, device=device),
-        "estimates": torch.as_tensor(
-            train.estimates, dtype=torch.float32, device=device
-        ),
-        "measurements": torch.as_tensor(
-            train.measurements, dtype=torch.float32, device=device
-        ),
-        "next_states": torch.as_tensor(
-            train.next_states, dtype=torch.float32, device=device
-        ),
-        "nus": torch.as_tensor(train.nus, dtype=torch.float32, device=device),
-        "nu_indices": torch.as_tensor(
-            train.nu_indices, dtype=torch.long, device=device
-        ),
-        "laplacian": torch.as_tensor(
-            grid.laplacian, dtype=torch.float32, device=device
-        ),
-        "dt": train.dt,
-    }
+    samples = _tensorize_samples(torch, train, grid, device)
     target_generators, target_maps = _target_operators(
         grid, train.nu_values, lambda_ratio
     )
@@ -350,9 +509,21 @@ def _train_one(
     optimizer = torch.optim.Adam(
         list(gain.parameters()) + list(certificate.parameters()), lr=2.0e-3
     )
+    matrix_tensor = torch.as_tensor(matrix, dtype=torch.float32, device=device)
     history: list[dict[str, float]] = []
     sample_count = samples["states"].shape[0]
-    for _ in range(epochs):
+    refresh_count = 0
+    for epoch in range(epochs):
+        if epoch > 0 and refresh_interval > 0 and epoch % refresh_interval == 0:
+            gain.eval()
+            refreshed = _collect_policy_samples(
+                torch, gain, device, train_cases, grid, matrix
+            )
+            samples = _tensorize_samples(torch, refreshed, grid, device)
+            sample_count = samples["states"].shape[0]
+            gain.train()
+            certificate.train()
+            refresh_count += 1
         permutation = torch.randperm(sample_count, device=device)
         for start in range(0, sample_count, batch_size):
             indices = permutation[start : start + batch_size]
@@ -364,8 +535,9 @@ def _train_one(
                 target_generators_tensor,
                 target_maps_tensor,
                 grid,
-                torch.as_tensor(matrix, dtype=torch.float32, device=device),
+                matrix_tensor,
                 indices,
+                stable_normalization=stable_normalization,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -393,8 +565,9 @@ def _train_one(
             target_generators_tensor,
             target_maps_tensor,
             grid,
-            torch.as_tensor(matrix, dtype=torch.float32, device=device),
+            matrix_tensor,
             indices,
+            stable_normalization=stable_normalization,
             defect_weight=defect_weight,
             bi_weight=bi_weight,
             lower_lipschitz=lower_lipschitz,
@@ -409,17 +582,21 @@ def _train_one(
         certificate,
         {
             "stable_training_loss": final_losses["stable"],
+            "stable_raw_training_loss": final_losses["stable_raw"],
             "defect_training_loss": final_losses["defect"],
             "bi_training_loss": final_losses["bi"],
             "total_training_loss": final_losses["total"],
             "stable_initial_last_batch_loss": history[0]["stable"],
             "stable_final_last_batch_loss": history[-1]["stable"],
+            "stable_raw_initial_last_batch_loss": history[0]["stable_raw"],
+            "stable_raw_final_last_batch_loss": history[-1]["stable_raw"],
             "defect_initial_last_batch_loss": history[0]["defect"],
             "defect_final_last_batch_loss": history[-1]["defect"],
             "bi_initial_last_batch_loss": history[0]["bi"],
             "bi_final_last_batch_loss": history[-1]["bi"],
             "total_initial_last_batch_loss": history[0]["total"],
             "total_final_last_batch_loss": history[-1]["total"],
+            "on_policy_refresh_count": refresh_count,
         },
     )
 
@@ -433,34 +610,14 @@ def _validation_loss(
     matrix: np.ndarray,
     *,
     lambda_ratio: float,
+    stable_normalization: str,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
     upper_lipschitz: float,
     device: str,
 ) -> dict[str, float]:
-    samples = {
-        "states": torch.as_tensor(
-            validation.states, dtype=torch.float32, device=device
-        ),
-        "estimates": torch.as_tensor(
-            validation.estimates, dtype=torch.float32, device=device
-        ),
-        "measurements": torch.as_tensor(
-            validation.measurements, dtype=torch.float32, device=device
-        ),
-        "next_states": torch.as_tensor(
-            validation.next_states, dtype=torch.float32, device=device
-        ),
-        "nus": torch.as_tensor(validation.nus, dtype=torch.float32, device=device),
-        "nu_indices": torch.as_tensor(
-            validation.nu_indices, dtype=torch.long, device=device
-        ),
-        "laplacian": torch.as_tensor(
-            grid.laplacian, dtype=torch.float32, device=device
-        ),
-        "dt": validation.dt,
-    }
+    samples = _tensorize_samples(torch, validation, grid, device)
     target_generators, target_maps = _target_operators(
         grid, validation.nu_values, lambda_ratio
     )
@@ -484,6 +641,7 @@ def _validation_loss(
             grid,
             torch.as_tensor(matrix, dtype=torch.float32, device=device),
             indices,
+            stable_normalization=stable_normalization,
             defect_weight=defect_weight,
             bi_weight=bi_weight,
             lower_lipschitz=lower_lipschitz,
@@ -505,46 +663,22 @@ def _simulate(
     *,
     noise: object = None,
 ) -> dict[str, float | int]:
-    n = grid.n
-
-    def rhs(time: float, combined: np.ndarray) -> np.ndarray:
-        truth, estimate = combined[:n], combined[n:]
-        measurement = matrix @ truth
-        if noise is not None:
-            measurement = measurement + noise(float(time))
-        features, innovation = _feature_numpy(
-            grid, matrix, estimate, measurement, case.nu
-        )
-        with torch.no_grad():
-            value = torch.as_tensor(
-                features[None, :], dtype=torch.float32, device=device
-            )
-            gain_value = gain(value)[0].cpu().numpy()
-        correction = gain_value @ innovation
-        return np.concatenate(
-            (
-                allen_cahn_rhs(grid, case.nu, truth),
-                allen_cahn_rhs(grid, case.nu, estimate) + correction,
-            )
-        )
-
-    result = solve_ivp(
-        rhs,
-        (0.0, 1.0),
-        np.concatenate((case.initial_truth(grid), case.initial_estimate(grid))),
-        method="DOP853",
-        t_eval=OUTPUT_TIMES,
-        rtol=1.0e-8,
-        atol=1.0e-10,
+    truth, estimate, _measurements, solver_status = _policy_rollout(
+        torch,
+        gain,
+        device,
+        grid,
+        matrix,
+        case,
+        noise=noise,
     )
-    trajectories = result.y.T
-    error = trajectories[:, n:] - trajectories[:, :n]
+    error = estimate - truth
     error_mass = np.sqrt(grid.h * np.sum(error**2, axis=1))
     energies = np.asarray(
-        [allen_cahn_energy(grid, case.nu, state) for state in trajectories[:, n:]]
+        [allen_cahn_energy(grid, case.nu, state) for state in estimate]
     )
     return {
-        "solver_status": int(result.status),
+        "solver_status": solver_status,
         "terminal_error_mass": float(error_mass[-1]),
         "peak_error_mass": float(np.max(error_mass)),
         "energy_defect": float(
@@ -553,24 +687,26 @@ def _simulate(
     }
 
 
-def _feature_numpy(
+def _simulate_fixed_gain(
     grid: AllenCahnGrid,
     matrix: np.ndarray,
-    estimate: np.ndarray,
-    measurement: np.ndarray,
-    nu: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    innovation = measurement - matrix @ estimate
-    features = np.concatenate(
-        (
-            estimate,
-            measurement,
-            innovation,
-            np.asarray([(nu - 0.01) / 0.01]),
-            np.asarray([np.sqrt(grid.h * np.dot(estimate, estimate))]),
-        )
+    case: object,
+    *,
+    gain: float,
+) -> dict[str, float | int]:
+    rollout = simulate_causal_nudging(
+        CausalNudging(grid, case.nu, matrix, gain=gain),
+        case.initial_truth(grid),
+        case.initial_estimate(grid),
+        output_times=OUTPUT_TIMES,
     )
-    return features, innovation
+    error = rollout.estimate - rollout.truth
+    error_mass = np.sqrt(grid.h * np.sum(error**2, axis=1))
+    return {
+        "solver_status": int(rollout.solver_status),
+        "terminal_error_mass": float(error_mass[-1]),
+        "peak_error_mass": float(np.max(error_mass)),
+    }
 
 
 def _median(records: list[dict[str, float | int]], key: str) -> float:
@@ -629,22 +765,35 @@ def run(
     base_gain: float,
     gain_scale: float,
     certificate_scale: float,
+    stable_normalization: str,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
     upper_lipschitz: float,
+    refresh_interval: int,
+    selection_limit: int,
+    selection_baseline_gain: float,
 ) -> dict[str, object]:
     results: list[dict[str, object]] = []
     for grid_size in grid_sizes:
         grid = AllenCahnGrid(grid_size)
         matrix = local_average_matrix(grid, INTERVALS)
+        train_cases = _split_cases("train", grid_size)
+        validation_cases = _split_cases("validation", grid_size)
         train = _collect_samples(
-            _split_cases("train", grid_size), grid, matrix, base_gain=base_gain
+            train_cases, grid, matrix, base_gain=base_gain
         )
         validation = _collect_samples(
-            _split_cases("validation", grid_size), grid, matrix, base_gain=base_gain
+            validation_cases, grid, matrix, base_gain=base_gain
         )
         test_cases = _split_cases("test", grid_size)
+        selection_cases = validation_cases[:selection_limit]
+        baseline_selection = [
+            _simulate_fixed_gain(
+                grid, matrix, case, gain=selection_baseline_gain
+            )
+            for case in selection_cases
+        ]
         models: dict[int, tuple[object, object]] = {}
         seed_results = []
         print(f"[grid={grid_size}] training {len(seeds)} seeds", flush=True)
@@ -654,6 +803,7 @@ def run(
                 grid,
                 matrix,
                 train,
+                train_cases,
                 seed=seed,
                 epochs=epochs,
                 batch_size=batch_size,
@@ -662,10 +812,12 @@ def run(
                 gain_scale=gain_scale,
                 certificate_scale=certificate_scale,
                 lambda_ratio=lambda_ratio,
+                stable_normalization=stable_normalization,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
+                refresh_interval=refresh_interval,
             )
             validation_loss = _validation_loss(
                 torch,
@@ -675,24 +827,52 @@ def run(
                 grid,
                 matrix,
                 lambda_ratio=lambda_ratio,
+                stable_normalization=stable_normalization,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
                 device=device,
             )
+            selection_replay = [
+                _simulate(torch, gain, device, grid, matrix, case)
+                for case in selection_cases
+            ]
+            certificate_audit = _audit(
+                torch, certificate, matrix, grid, device
+            )
             seed_results.append(
                 {
                     "seed": seed,
                     **losses,
                     "stable_validation_loss": validation_loss["stable"],
+                    "stable_raw_validation_loss": validation_loss["stable_raw"],
                     "defect_validation_loss": validation_loss["defect"],
                     "bi_validation_loss": validation_loss["bi"],
                     "total_validation_loss": validation_loss["total"],
+                    "selection_case_count": len(selection_replay),
+                    "validation_median_terminal_error_mass": _median(
+                        selection_replay, "terminal_error_mass"
+                    ),
+                    "certificate_audit": certificate_audit,
                 }
             )
             models[seed] = (gain, certificate)
-        best = min(seed_results, key=lambda item: item["total_validation_loss"])
+        eligible = [
+            item
+            for item in seed_results
+            if item["certificate_audit"]["min_jacobian_singular_value"]
+            >= lower_lipschitz - 1.0e-5
+            and item["certificate_audit"]["max_zero_fiber_residual"] <= 1.0e-7
+            and item["certificate_audit"]["max_direction_residual"] <= 1.0e-7
+        ]
+        best = min(
+            eligible or seed_results,
+            key=lambda item: (
+                item["validation_median_terminal_error_mass"],
+                item["total_validation_loss"],
+            ),
+        )
         best_seed = int(best["seed"])
         gain, certificate = models[best_seed]
         replay = [
@@ -720,10 +900,18 @@ def run(
             "base_gain": base_gain,
             "gain_scale": gain_scale,
             "certificate_scale": certificate_scale,
+            "stable_normalization": stable_normalization,
             "defect_weight": defect_weight,
             "bi_weight": bi_weight,
             "lower_lipschitz": lower_lipschitz,
             "upper_lipschitz": upper_lipschitz,
+            "refresh_interval": refresh_interval,
+            "selection_limit": selection_limit,
+            "selection_baseline_gain": selection_baseline_gain,
+            "selection_baseline_median_terminal_error_mass": _median(
+                baseline_selection, "terminal_error_mass"
+            ),
+            "selection_constraint_passed": bool(eligible),
             "selected_seed": best_seed,
             "seed_results": seed_results,
             "test_case_count": len(replay),
@@ -733,7 +921,7 @@ def run(
             "noisy_median_terminal_error_mass": _median(
                 noisy_replay, "terminal_error_mass"
             ),
-            "certificate_audit": _audit(torch, certificate, matrix, grid, device),
+            "certificate_audit": best["certificate_audit"],
         }
         results.append(grid_result)
         print(
@@ -741,6 +929,7 @@ def run(
             f"total={best['total_validation_loss']:.6g} "
             f"defect={best['defect_validation_loss']:.6g} "
             f"bi={best['bi_validation_loss']:.6g} "
+            f"validation={best['validation_median_terminal_error_mass']:.6g} "
             f"test={grid_result['test_median_terminal_error_mass']:.6g} "
             f"noisy={grid_result['noisy_median_terminal_error_mass']:.6g}",
             flush=True,
@@ -751,10 +940,14 @@ def run(
         "base_gain": base_gain,
         "gain_scale": gain_scale,
         "certificate_scale": certificate_scale,
+        "stable_normalization": stable_normalization,
         "defect_weight": defect_weight,
         "bi_weight": bi_weight,
         "lower_lipschitz": lower_lipschitz,
         "upper_lipschitz": upper_lipschitz,
+        "refresh_interval": refresh_interval,
+        "selection_limit": selection_limit,
+        "selection_baseline_gain": selection_baseline_gain,
         "grid_sizes": grid_sizes,
         "seeds": seeds,
         "epochs": epochs,
@@ -779,10 +972,18 @@ def main() -> None:
     parser.add_argument("--base-gain", type=float, default=0.02)
     parser.add_argument("--gain-scale", type=float, default=0.5)
     parser.add_argument("--certificate-scale", type=float, default=1.0)
+    parser.add_argument(
+        "--stable-normalization",
+        choices=("none", "error-time"),
+        default="error-time",
+    )
     parser.add_argument("--defect-weight", type=float, default=1.0)
     parser.add_argument("--bi-weight", type=float, default=1.0)
     parser.add_argument("--lower-lipschitz", type=float, default=0.5)
     parser.add_argument("--upper-lipschitz", type=float, default=2.0)
+    parser.add_argument("--refresh-interval", type=int, default=50)
+    parser.add_argument("--selection-limit", type=int, default=48)
+    parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     import torch
@@ -793,6 +994,12 @@ def main() -> None:
         raise SystemExit("loss weights must be nonnegative")
     if args.lower_lipschitz <= 0.0 or args.upper_lipschitz < args.lower_lipschitz:
         raise SystemExit("lipschitz bounds must satisfy 0 < lower <= upper")
+    if args.refresh_interval < 0:
+        raise SystemExit("--refresh-interval must be nonnegative")
+    if args.selection_limit < 1:
+        raise SystemExit("--selection-limit must be positive")
+    if args.selection_baseline_gain < 0.0:
+        raise SystemExit("--selection-baseline-gain must be nonnegative")
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise SystemExit("CUDA requested but torch.cuda.is_available() is false")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -809,10 +1016,14 @@ def main() -> None:
         base_gain=args.base_gain,
         gain_scale=args.gain_scale,
         certificate_scale=args.certificate_scale,
+        stable_normalization=args.stable_normalization,
         defect_weight=args.defect_weight,
         bi_weight=args.bi_weight,
         lower_lipschitz=args.lower_lipschitz,
         upper_lipschitz=args.upper_lipschitz,
+        refresh_interval=args.refresh_interval,
+        selection_limit=args.selection_limit,
+        selection_baseline_gain=args.selection_baseline_gain,
     )
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"grid_count": len(result["results"]), "device": args.device}))

@@ -118,6 +118,49 @@ m_h=0.5\le s_{\phi,h}(u)\le M_h^\sharp=2.0.
 作为数值安全项。由于硬限制已经满足双 Lipschitz 范数带，正式运行中该项为零是预期的，
 不把它误写成连续域证明。
 
+## 归一化与当前观测器轨迹修正
+
+研究计划把 Allen--Cahn 写成线性扩散部分与非线性反应部分的和。因此本轮把目标生成元
+修正为
+
+\[
+A_{s,h}=\nu L_h-\lambda I,
+\qquad
+\lambda/\rho_1\in\{0.1,0.5,1.0\},
+\qquad
+\rho_1=\nu\pi^2.
+\]
+
+旧实现中的 \(\nu L_h+I-\lambda I\) 把反应项 \(+u\) 重复放进目标线性算子，在当前参数
+范围内不能保证目标第一模态衰减，因此不再沿用。
+
+离散残差天然带有 \(\Delta t^2\) 的尺度，而连续缺陷按 \(\|e\|_{M_h}^2\) 归一化。
+本轮训练使用
+
+\[
+\widetilde{\mathcal L}_{\mathrm{stable}}
+=\frac1N\sum_{j=1}^N
+\frac{
+\|T_{\phi,h}(u_{j+1},e_{j+1})
+-S_{\Delta t}T_{\phi,h}(u_j,e_j)\|_{M_h}^2
+}{
+\Delta t^2(\|e_j\|_{M_h}^2+10^{-8})
+},
+\]
+
+并同时保存未归一化的 \(\mathcal L_{\mathrm{stable}}\)，用于与此前运行比较。
+
+训练不再始终使用固定增益产生的误差轨迹。每隔冻结的 epoch 数，用当前
+\(\Gamma_{\theta,h}\) 重新运行训练 observer，刷新 \((u_j,e_j)\) 样本。seed 选择先要求
+fiber、direction 和 Jacobian 下界审计通过，再按独立 validation rollout 的终点误差排序；
+总训练损失只作并列判据。
+
+本轮筛选冻结为：\(n=31\)，seed 501--502，60 epoch，每 20 epoch 刷新一次；
+\(\lambda/\rho_1\in\{0.1,0.5,1.0\}\)，
+\(\omega_{\mathrm{defect}}\in\{0.1,1.0\}\)。每个配置只用 validation 排序，test 不参与
+超参数或 seed 选择。筛选运行有限且可逆性审计通过后，用选中配置执行三网格、四 seed 的
+正式复核；科学失败保留，不自动改阈值。
+
 ## 预注册结果
 
 每个网格、随机种子和 \(\lambda/\rho_1\) 记录：
