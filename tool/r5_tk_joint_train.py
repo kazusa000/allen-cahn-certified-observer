@@ -119,18 +119,21 @@ def _allen_cahn_rhs_tensor(
     return nus[:, None] * (states @ laplacian.T) + states - states**3
 
 
-def _target_maps(
+def _target_operators(
     grid: AllenCahnGrid,
     nu_values: tuple[float, ...],
     lambda_ratio: float,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     identity = np.eye(grid.n, dtype=float)
+    generators = []
     maps = []
     for nu in nu_values:
         linear = nu * grid.laplacian + identity
         lam = lambda_ratio * nu * np.pi**2
-        maps.append(expm(grid_step(grid) * (linear - lam * identity)))
-    return np.asarray(maps, dtype=float)
+        generator = linear - lam * identity
+        generators.append(generator)
+        maps.append(expm(grid_step(grid) * generator))
+    return np.asarray(generators, dtype=float), np.asarray(maps, dtype=float)
 
 
 def grid_step(grid: AllenCahnGrid) -> float:
@@ -200,16 +203,22 @@ def _build_models(
     return GainNet(), CertificateNet()
 
 
-def _stable_loss(
+def _joint_loss_components(
     torch: object,
     gain: object,
     certificate: object,
     samples: dict[str, object],
+    target_generators: object,
     target_maps: object,
     grid: AllenCahnGrid,
     matrix: object,
     indices: object,
-) -> object:
+    *,
+    defect_weight: float,
+    bi_weight: float,
+    lower_lipschitz: float,
+    upper_lipschitz: float,
+) -> dict[str, object]:
     states = samples["states"][indices]
     estimates = samples["estimates"][indices]
     measurements = samples["measurements"][indices]
@@ -222,7 +231,9 @@ def _stable_loss(
     gains = gain(features)
     correction = torch.bmm(gains, innovations[:, :, None]).squeeze(-1)
     laplacian = samples["laplacian"]
+    rhs_truth = _allen_cahn_rhs_tensor(torch, grid, states, nus, laplacian)
     rhs_estimate = _allen_cahn_rhs_tensor(torch, grid, estimates, nus, laplacian)
+    error_rhs = rhs_estimate + correction - rhs_truth
     next_estimates = estimates + samples["dt"] * (rhs_estimate + correction)
     errors = estimates - states
     next_errors = next_estimates - next_states
@@ -232,7 +243,41 @@ def _stable_loss(
         -1
     )
     residual = next_transformed - stable_target
-    return grid.h * torch.mean(torch.sum(residual**2, dim=1))
+    stable_loss = grid.h * torch.mean(torch.sum(residual**2, dim=1))
+
+    def transform(state: object, error: object) -> object:
+        return certificate(state, error)
+
+    _, directional = torch.autograd.functional.jvp(
+        transform,
+        (states, errors),
+        (rhs_truth, error_rhs),
+        create_graph=True,
+    )
+    generator = torch.bmm(
+        target_generators[nu_indices], transformed[:, :, None]
+    ).squeeze(-1)
+    defect_residual = directional - generator
+    error_squared_mass = grid.h * torch.sum(errors**2, dim=1)
+    defect_squared_mass = grid.h * torch.sum(defect_residual**2, dim=1)
+    defect_loss = torch.mean(defect_squared_mass / (error_squared_mass + 1.0e-8))
+
+    error_norm = torch.sqrt(error_squared_mass + 1.0e-12)
+    transformed_norm = torch.sqrt(
+        grid.h * torch.sum(transformed**2, dim=1) + 1.0e-12
+    )
+    lower_violation = torch.relu(lower_lipschitz * error_norm - transformed_norm)
+    upper_violation = torch.relu(transformed_norm - upper_lipschitz * error_norm)
+    bi_loss = torch.mean(lower_violation**2 + upper_violation**2)
+    total_loss = (
+        stable_loss + defect_weight * defect_loss + bi_weight * bi_loss
+    )
+    return {
+        "stable": stable_loss,
+        "defect": defect_loss,
+        "bi": bi_loss,
+        "total": total_loss,
+    }
 
 
 def _train_one(
@@ -249,6 +294,10 @@ def _train_one(
     gain_scale: float,
     certificate_scale: float,
     lambda_ratio: float,
+    defect_weight: float,
+    bi_weight: float,
+    lower_lipschitz: float,
+    upper_lipschitz: float,
 ) -> tuple[object, object, dict[str, float]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
@@ -283,59 +332,90 @@ def _train_one(
         ),
         "dt": train.dt,
     }
-    targets = torch.as_tensor(
-        _target_maps(grid, train.nu_values, lambda_ratio),
+    target_generators, target_maps = _target_operators(
+        grid, train.nu_values, lambda_ratio
+    )
+    target_generators_tensor = torch.as_tensor(
+        target_generators, dtype=torch.float32, device=device
+    )
+    target_maps_tensor = torch.as_tensor(
+        target_maps,
         dtype=torch.float32,
         device=device,
     )
     optimizer = torch.optim.Adam(
         list(gain.parameters()) + list(certificate.parameters()), lr=2.0e-3
     )
-    history: list[float] = []
+    history: list[dict[str, float]] = []
     sample_count = samples["states"].shape[0]
     for _ in range(epochs):
         permutation = torch.randperm(sample_count, device=device)
         for start in range(0, sample_count, batch_size):
             indices = permutation[start : start + batch_size]
-            loss = _stable_loss(
+            components = _joint_loss_components(
                 torch,
                 gain,
                 certificate,
                 samples,
-                targets,
+                target_generators_tensor,
+                target_maps_tensor,
                 grid,
                 torch.as_tensor(matrix, dtype=torch.float32, device=device),
                 indices,
+                defect_weight=defect_weight,
+                bi_weight=bi_weight,
+                lower_lipschitz=lower_lipschitz,
+                upper_lipschitz=upper_lipschitz,
             )
+            loss = components["total"]
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
-        history.append(float(loss.detach().cpu().item()))
+        history.append(
+            {
+                name: float(value.detach().cpu().item())
+                for name, value in components.items()
+            }
+        )
     gain.eval()
     certificate.eval()
-    with torch.no_grad():
+    with torch.enable_grad():
         indices = torch.arange(sample_count, device=device)
-        final_loss = float(
-            _stable_loss(
-                torch,
-                gain,
-                certificate,
-                samples,
-                targets,
-                grid,
-                torch.as_tensor(matrix, dtype=torch.float32, device=device),
-                indices,
-            )
-            .cpu()
-            .item()
+        final_components = _joint_loss_components(
+            torch,
+            gain,
+            certificate,
+            samples,
+            target_generators_tensor,
+            target_maps_tensor,
+            grid,
+            torch.as_tensor(matrix, dtype=torch.float32, device=device),
+            indices,
+            defect_weight=defect_weight,
+            bi_weight=bi_weight,
+            lower_lipschitz=lower_lipschitz,
+            upper_lipschitz=upper_lipschitz,
         )
+        final_losses = {
+            name: float(value.detach().cpu().item())
+            for name, value in final_components.items()
+        }
     return (
         gain,
         certificate,
         {
-            "stable_training_loss": final_loss,
-            "stable_initial_last_batch_loss": history[0],
-            "stable_final_last_batch_loss": history[-1],
+            "stable_training_loss": final_losses["stable"],
+            "defect_training_loss": final_losses["defect"],
+            "bi_training_loss": final_losses["bi"],
+            "total_training_loss": final_losses["total"],
+            "stable_initial_last_batch_loss": history[0]["stable"],
+            "stable_final_last_batch_loss": history[-1]["stable"],
+            "defect_initial_last_batch_loss": history[0]["defect"],
+            "defect_final_last_batch_loss": history[-1]["defect"],
+            "bi_initial_last_batch_loss": history[0]["bi"],
+            "bi_final_last_batch_loss": history[-1]["bi"],
+            "total_initial_last_batch_loss": history[0]["total"],
+            "total_final_last_batch_loss": history[-1]["total"],
         },
     )
 
@@ -349,8 +429,12 @@ def _validation_loss(
     matrix: np.ndarray,
     *,
     lambda_ratio: float,
+    defect_weight: float,
+    bi_weight: float,
+    lower_lipschitz: float,
+    upper_lipschitz: float,
     device: str,
-) -> float:
+) -> dict[str, float]:
     samples = {
         "states": torch.as_tensor(
             validation.states, dtype=torch.float32, device=device
@@ -373,27 +457,38 @@ def _validation_loss(
         ),
         "dt": validation.dt,
     }
-    targets = torch.as_tensor(
-        _target_maps(grid, validation.nu_values, lambda_ratio),
+    target_generators, target_maps = _target_operators(
+        grid, validation.nu_values, lambda_ratio
+    )
+    target_generators_tensor = torch.as_tensor(
+        target_generators, dtype=torch.float32, device=device
+    )
+    target_maps_tensor = torch.as_tensor(
+        target_maps,
         dtype=torch.float32,
         device=device,
     )
-    with torch.no_grad():
+    with torch.enable_grad():
         indices = torch.arange(samples["states"].shape[0], device=device)
-        return float(
-            _stable_loss(
-                torch,
-                gain,
-                certificate,
-                samples,
-                targets,
-                grid,
-                torch.as_tensor(matrix, dtype=torch.float32, device=device),
-                indices,
-            )
-            .cpu()
-            .item()
+        components = _joint_loss_components(
+            torch,
+            gain,
+            certificate,
+            samples,
+            target_generators_tensor,
+            target_maps_tensor,
+            grid,
+            torch.as_tensor(matrix, dtype=torch.float32, device=device),
+            indices,
+            defect_weight=defect_weight,
+            bi_weight=bi_weight,
+            lower_lipschitz=lower_lipschitz,
+            upper_lipschitz=upper_lipschitz,
         )
+        return {
+            name: float(value.detach().cpu().item())
+            for name, value in components.items()
+        }
 
 
 def _simulate(
@@ -530,6 +625,10 @@ def run(
     base_gain: float,
     gain_scale: float,
     certificate_scale: float,
+    defect_weight: float,
+    bi_weight: float,
+    lower_lipschitz: float,
+    upper_lipschitz: float,
 ) -> dict[str, object]:
     results: list[dict[str, object]] = []
     for grid_size in grid_sizes:
@@ -559,6 +658,10 @@ def run(
                 gain_scale=gain_scale,
                 certificate_scale=certificate_scale,
                 lambda_ratio=lambda_ratio,
+                defect_weight=defect_weight,
+                bi_weight=bi_weight,
+                lower_lipschitz=lower_lipschitz,
+                upper_lipschitz=upper_lipschitz,
             )
             validation_loss = _validation_loss(
                 torch,
@@ -568,17 +671,24 @@ def run(
                 grid,
                 matrix,
                 lambda_ratio=lambda_ratio,
+                defect_weight=defect_weight,
+                bi_weight=bi_weight,
+                lower_lipschitz=lower_lipschitz,
+                upper_lipschitz=upper_lipschitz,
                 device=device,
             )
             seed_results.append(
                 {
                     "seed": seed,
                     **losses,
-                    "stable_validation_loss": validation_loss,
+                    "stable_validation_loss": validation_loss["stable"],
+                    "defect_validation_loss": validation_loss["defect"],
+                    "bi_validation_loss": validation_loss["bi"],
+                    "total_validation_loss": validation_loss["total"],
                 }
             )
             models[seed] = (gain, certificate)
-        best = min(seed_results, key=lambda item: item["stable_validation_loss"])
+        best = min(seed_results, key=lambda item: item["total_validation_loss"])
         best_seed = int(best["seed"])
         gain, certificate = models[best_seed]
         replay = [
@@ -606,6 +716,10 @@ def run(
             "base_gain": base_gain,
             "gain_scale": gain_scale,
             "certificate_scale": certificate_scale,
+            "defect_weight": defect_weight,
+            "bi_weight": bi_weight,
+            "lower_lipschitz": lower_lipschitz,
+            "upper_lipschitz": upper_lipschitz,
             "selected_seed": best_seed,
             "seed_results": seed_results,
             "test_case_count": len(replay),
@@ -620,7 +734,9 @@ def run(
         results.append(grid_result)
         print(
             f"[grid={grid_size}] seed={best_seed} "
-            f"stable={best['stable_validation_loss']:.6g} "
+            f"total={best['total_validation_loss']:.6g} "
+            f"defect={best['defect_validation_loss']:.6g} "
+            f"bi={best['bi_validation_loss']:.6g} "
             f"test={grid_result['test_median_terminal_error_mass']:.6g} "
             f"noisy={grid_result['noisy_median_terminal_error_mass']:.6g}",
             flush=True,
@@ -631,6 +747,10 @@ def run(
         "base_gain": base_gain,
         "gain_scale": gain_scale,
         "certificate_scale": certificate_scale,
+        "defect_weight": defect_weight,
+        "bi_weight": bi_weight,
+        "lower_lipschitz": lower_lipschitz,
+        "upper_lipschitz": upper_lipschitz,
         "grid_sizes": grid_sizes,
         "seeds": seeds,
         "epochs": epochs,
@@ -655,12 +775,20 @@ def main() -> None:
     parser.add_argument("--base-gain", type=float, default=0.02)
     parser.add_argument("--gain-scale", type=float, default=0.5)
     parser.add_argument("--certificate-scale", type=float, default=1.0)
+    parser.add_argument("--defect-weight", type=float, default=1.0)
+    parser.add_argument("--bi-weight", type=float, default=1.0)
+    parser.add_argument("--lower-lipschitz", type=float, default=0.5)
+    parser.add_argument("--upper-lipschitz", type=float, default=2.0)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     import torch
 
     if args.lambda_ratio <= 0.0:
         raise SystemExit("--lambda-ratio must be positive")
+    if args.defect_weight < 0.0 or args.bi_weight < 0.0:
+        raise SystemExit("loss weights must be nonnegative")
+    if args.lower_lipschitz <= 0.0 or args.upper_lipschitz < args.lower_lipschitz:
+        raise SystemExit("lipschitz bounds must satisfy 0 < lower <= upper")
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise SystemExit("CUDA requested but torch.cuda.is_available() is false")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -677,6 +805,10 @@ def main() -> None:
         base_gain=args.base_gain,
         gain_scale=args.gain_scale,
         certificate_scale=args.certificate_scale,
+        defect_weight=args.defect_weight,
+        bi_weight=args.bi_weight,
+        lower_lipschitz=args.lower_lipschitz,
+        upper_lipschitz=args.upper_lipschitz,
     )
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"grid_count": len(result["results"]), "device": args.device}))
