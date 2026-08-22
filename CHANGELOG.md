@@ -13,3 +13,5 @@
 - Added the R5 pilot formal contract for state/error domains, grids, splits, noise, and compute gates.
 - Corrected causal nudging to use the physical mass-adjoint observation injection for cross-grid comparability.
 - Added deterministic R5 pilot case generation and an exploratory local baseline sweep tool.
+- Added the CPU-only causal state-conditioned linear residual correction fit for R5-D, with a fixed physical-gain safeguard.
+- Added the reproducible held-out R5-D smoke runner with physical-error, energy-defect, and measurement-noise diagnostics.

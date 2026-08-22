@@ -21,6 +21,11 @@ from .solver import (
     allen_cahn_rhs,
     solve_allen_cahn,
 )
+from .training import (
+    StateConditionedLinearCorrection,
+    fit_state_conditioned_linear_correction,
+    simulate_learned_correction,
+)
 
 __all__ = [
     "AllenCahnGrid",
@@ -31,15 +36,18 @@ __all__ = [
     "NullspaceCertificate",
     "ObserverRollout",
     "PilotCase",
+    "StateConditionedLinearCorrection",
     "allen_cahn_energy",
     "allen_cahn_jacobian",
     "allen_cahn_rhs",
     "audit_certificate",
+    "fit_state_conditioned_linear_correction",
     "generate_pilot_cases",
     "incremental_remainder",
     "local_average_matrix",
     "local_incremental_rhs",
     "noise_waveform",
     "simulate_causal_nudging",
+    "simulate_learned_correction",
     "solve_allen_cahn",
 ]
