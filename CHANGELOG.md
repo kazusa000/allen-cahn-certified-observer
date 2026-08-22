@@ -17,3 +17,5 @@
 - Added the reproducible held-out R5-D smoke runner with physical-error, energy-defect, and measurement-noise diagnostics.
 - Added the optional PyTorch R5-E joint correction/certificate GPU pilot runner.
 - Added independent R5-F checkpoint replay, baseline comparison, and measurement-noise verification.
+- Added the R5 ablation matrix runner for fixed-gain, state-conditioning, certificate, direction,
+  and bounded-gate factors.
