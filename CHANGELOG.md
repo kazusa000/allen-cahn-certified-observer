@@ -26,3 +26,5 @@
   state-conditioned nullspace scaling; completed the formal 2060 multi-grid run.
 - Corrected the R5 stable target to the research-plan diffusion operator, normalized the discrete
   stable loss, added current-observer trajectory refresh, and added validation-rollout model selection.
+- Completed the 2060 screening and formal multi-grid replay for the corrected target; the selected
+  observer improved noiseless held-out error on all three grids while the dynamics defect remained open.

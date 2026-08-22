@@ -4,11 +4,15 @@
 
 - ID：R5-tk-joint-2026-08-22
 - 类型：Experiment Result
-- 状态：VERIFIED
+- 状态：SUPERSEDED
 - 代码提交：89cbd4db636fc38cee66beddd3593e9e1c1b725f
 - 执行节点：局域网直连 192.168.1.220，RTX 2060 6GB
 - 原始输出：/home/wjj/work/wt/phd-project1-codex/project/project1/experiment/allen-cahn-certified-observer/out/2026-08-22-r5-tk-joint-192-direct/
 - 运行退出码：0
+
+> 后续审计发现本运行把 Allen--Cahn 反应项 \(+I\) 重复放入了目标生成元，导致
+> \(A_{s,h}=\nu L_h+I-\lambda I\) 在当前参数范围内不保证稳定。本文件保留为历史运行记录；
+> 修正后的正式结论见 `report/r5-normalized-refresh.md`。
 
 ## 联合目标
 
