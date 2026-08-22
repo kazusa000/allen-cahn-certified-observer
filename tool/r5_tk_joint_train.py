@@ -148,6 +148,8 @@ def _build_models(
     base_gain: float,
     gain_scale: float,
     certificate_scale: float,
+    lower_lipschitz: float,
+    upper_lipschitz: float,
 ) -> tuple[object, object]:
     nn = torch.nn
     n = grid.n
@@ -181,7 +183,7 @@ def _build_models(
             super().__init__()
             null_dimension = basis.shape[1]
             self.network = nn.Sequential(
-                nn.Linear(2 * n, 128),
+                nn.Linear(n, 128),
                 nn.Tanh(),
                 nn.Linear(128, 128),
                 nn.Tanh(),
@@ -195,10 +197,10 @@ def _build_models(
 
         def forward(self, states: object, errors: object) -> object:
             coordinates = errors @ self.null_basis
-            gates = certificate_scale * torch.tanh(
-                self.network(torch.cat((states, errors), dim=1))
-            )
-            return errors + (gates * coordinates) @ self.null_basis.T
+            scales = lower_lipschitz + (
+                upper_lipschitz - lower_lipschitz
+            ) * torch.sigmoid(certificate_scale * self.network(states))
+            return errors + ((scales - 1.0) * coordinates) @ self.null_basis.T
 
     return GainNet(), CertificateNet()
 
@@ -309,6 +311,8 @@ def _train_one(
         base_gain=base_gain,
         gain_scale=gain_scale,
         certificate_scale=certificate_scale,
+        lower_lipschitz=lower_lipschitz,
+        upper_lipschitz=upper_lipschitz,
     )
     gain.to(device)
     certificate.to(device)
