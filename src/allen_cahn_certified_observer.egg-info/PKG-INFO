@@ -1,7 +1,0 @@
-Metadata-Version: 2.4
-Name: allen-cahn-certified-observer
-Version: 0.1.0
-Summary: High-accuracy Allen-Cahn solver and certified nonlinear observer correction under partial observations.
-Requires-Python: >=3.11
-Requires-Dist: numpy>=2.0
-Requires-Dist: scipy>=1.11
