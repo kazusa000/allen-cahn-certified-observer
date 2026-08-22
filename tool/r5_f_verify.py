@@ -60,6 +60,7 @@ def run(
         checkpoint = torch.load(
             run_dir / f"checkpoint-grid-{grid_size}-seed-{selected_seed}.pt",
             map_location=device,
+            weights_only=False,
         )
         correction, certificate = _build_models(
             torch,
