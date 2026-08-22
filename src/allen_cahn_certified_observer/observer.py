@@ -50,7 +50,7 @@ class CausalNudging:
         innovation = observed - matrix @ state
         return (
             allen_cahn_rhs(self.grid, self.nu, state)
-            + self.gain * matrix.T @ innovation
+            + self.gain * (matrix.T @ innovation) / self.grid.h
         )
 
 

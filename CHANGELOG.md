@@ -11,3 +11,4 @@
 - Added the R5-B local incremental Jacobian/remainder diagnostics and offline causal observer rollout harness.
 - Added the R5-C offline certificate interface and fiber/direction/local-invertibility audit.
 - Added the R5 pilot formal contract for state/error domains, grids, splits, noise, and compute gates.
+- Corrected causal nudging to use the physical mass-adjoint observation injection for cross-grid comparability.

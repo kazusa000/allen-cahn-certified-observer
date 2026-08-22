@@ -27,7 +27,8 @@ linear observer claim.
 ## Baselines
 
 - open loop: correction gain zero;
-- causal constant-gain nudging using the current local-average innovation;
+- causal constant-gain nudging using the current local-average innovation and the physical mass adjoint
+  \(M_h^{-1}C_h^\top\);
 - the R2 fixed-gain construction, when its observation and grid assumptions are satisfied.
 
 The offline rollout harness uses the true state only to generate the measurement stream. The observer RHS
