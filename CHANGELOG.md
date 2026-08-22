@@ -22,3 +22,5 @@
 - Recorded the completed 2060 R5 ablation sweep and its certificate/online-coupling conclusion.
 - Added the T--K-style R5 joint trainer that optimizes the discrete stable-target loss through both
   the state-conditioned certificate and the deployable gain network.
+- Added the R5 joint dynamics-defect loss, two-sided invertibility loss, and structurally bounded
+  state-conditioned nullspace scaling; completed the formal 2060 multi-grid run.

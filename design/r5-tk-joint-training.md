@@ -47,6 +47,35 @@ T_{\phi,h}(u_{j+1},e_{j+1})
 这使 \(T_{\phi,h}\) 的参数和 \(\Gamma_{\theta,h}\) 的参数出现在同一个损失的计算图中。
 certificate 仍不部署；真状态和真误差只用于离线训练和审计。
 
+在此基础上，当前正式版本同时加入连续动力学缺陷。无噪声训练样本上令
+
+\[
+r^0_{\theta,\phi,h}(u,e)
+=D_uT_{\phi,h}(u,e)F_h(u)
++D_eT_{\phi,h}(u,e)\bigl(F_h(u+e)-F_h(u)+g_{\theta,h}(u,e)\bigr)
+-A_{s,h}T_{\phi,h}(u,e),
+\]
+
+其中 \(g_{\theta,h}\) 是当前增益作用在创新上的校正项。缺陷项按误差质量归一化：
+
+\[
+\mathcal L_{\mathrm{defect}}
+=\frac1N\sum_{j=1}^N
+\frac{\|r^0_{\theta,\phi,h}(u_j,e_j)\|_{M_h}^2}
+{\|e_j\|_{M_h}^2+10^{-8}}.
+\]
+
+总训练目标为
+
+\[
+\mathcal L_{\mathrm{joint}}
+=\mathcal L_{\mathrm{stable}}
++\omega_{\mathrm{defect}}\mathcal L_{\mathrm{defect}}
++\omega_{\mathrm{bi}}\mathcal L_{\mathrm{bi}},
+\qquad
+\omega_{\mathrm{defect}}=\omega_{\mathrm{bi}}=1.
+\]
+
 ## 参数化与约束
 
 在线 \(\Gamma_{\theta,h}\) 只接收估计场、当前观测、创新、已知 \(\nu\) 和估计场质量范数，
@@ -67,7 +96,27 @@ C_hT_{\phi,h}(u,e)=C_he
 \]
 
 在浮点误差内成立。该结构只负责 fiber/direction 约束；动力学是否接近
-\(A_{s,h}\) 由 \(\mathcal L_{\mathrm{stable}}\) 检验。
+\(A_{s,h}\) 由 \(\mathcal L_{\mathrm{stable}}+\mathcal L_{\mathrm{defect}}\) 检验。
+
+当前版本的门控只依赖 \(u\)，并把每个零空间方向的缩放因子硬限制在
+
+\[
+m_h=0.5\le s_{\phi,h}(u)\le M_h^\sharp=2.0.
+\]
+
+因此在观测方向上保持恒等、在零空间方向上保持正的缩放，\(D_eT_{\phi,h}\) 的局部
+奇异值下界由结构保证；同时保留
+
+\[
+\mathcal L_{\mathrm{bi}}
+=\frac1N\sum_{j=1}^N\left[
+\operatorname{ReLU}\!\left(m_h\|e_j\|_{M_h}-\|T_{\phi,h}(u_j,e_j)\|_{M_h}\right)^2
++\operatorname{ReLU}\!\left(\|T_{\phi,h}(u_j,e_j)\|_{M_h}-M_h^\sharp\|e_j\|_{M_h}\right)^2
+\right]
+\]
+
+作为数值安全项。由于硬限制已经满足双 Lipschitz 范数带，正式运行中该项为零是预期的，
+不把它误写成连续域证明。
 
 ## 预注册结果
 
