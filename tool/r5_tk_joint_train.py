@@ -330,6 +330,7 @@ def _build_models(
     mixing_layers: int = 0,
     shear_norm_limit: float = 0.0,
     gain_trust_ratio: float = 0.0,
+    gain_kind: str = "dense",
 ) -> tuple[object, object]:
     nn = torch.nn
     n = grid.n
@@ -337,6 +338,10 @@ def _build_models(
     feature_dim = n + 2 * q + 2
     basis = NullspaceCertificate(matrix).null_basis
     row_basis = np.linalg.qr(matrix.T, mode="reduced")[0]
+    if gain_kind not in {"dense", "mass-adjoint"}:
+        raise ValueError(f"unknown gain kind: {gain_kind}")
+    if gain_kind == "mass-adjoint" and not 0.0 < gain_trust_ratio < 1.0:
+        raise ValueError("mass-adjoint gain requires 0 < trust ratio < 1")
 
     class GainNet(nn.Module):
         def __init__(self) -> None:
@@ -346,7 +351,7 @@ def _build_models(
                 nn.Tanh(),
                 nn.Linear(128, 128),
                 nn.Tanh(),
-                nn.Linear(128, n * q),
+                nn.Linear(128, n * q if gain_kind == "dense" else q),
             )
             nn.init.zeros_(self.network[-1].weight)
             nn.init.zeros_(self.network[-1].bias)
@@ -358,10 +363,21 @@ def _build_models(
                 "base_gain_norm",
                 torch.linalg.vector_norm(self.base_gain),
             )
+            self.register_buffer(
+                "injection_basis",
+                torch.as_tensor(matrix.T / grid.h, dtype=torch.float32),
+            )
             self.gain_trust_ratio = gain_trust_ratio
+            self.gain_kind = gain_kind
 
         def forward(self, features: object) -> object:
-            raw = self.network(features).reshape(-1, n, q)
+            raw = self.network(features)
+            if self.gain_kind == "mass-adjoint":
+                sensor_gain = base_gain * (
+                    1.0 + self.gain_trust_ratio * torch.tanh(raw)
+                )
+                return self.injection_basis[None, :, :] * sensor_gain[:, None, :]
+            raw = raw.reshape(-1, n, q)
             delta = gain_scale * torch.tanh(raw)
             if self.gain_trust_ratio > 0.0:
                 delta_norm = torch.linalg.vector_norm(
@@ -674,6 +690,7 @@ def _train_one(
     certificate_learning_rate: float = 2.0e-3,
     gradient_clip_norm: float = 0.0,
     gain_trust_ratio: float = 0.0,
+    gain_kind: str = "dense",
 ) -> tuple[object, object, dict[str, float | int]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
@@ -691,6 +708,7 @@ def _train_one(
         mixing_layers=mixing_layers,
         shear_norm_limit=shear_norm_limit,
         gain_trust_ratio=gain_trust_ratio,
+        gain_kind=gain_kind,
     )
     gain.to(device)
     certificate.to(device)
@@ -836,6 +854,7 @@ def _train_one(
             "certificate_learning_rate": certificate_learning_rate,
             "gradient_clip_norm": gradient_clip_norm,
             "gain_trust_ratio": gain_trust_ratio,
+            "gain_kind": gain_kind,
             "gain_reg_weight": gain_reg_weight,
         },
     )
@@ -953,9 +972,7 @@ def _defect_audit(
             features, innovations = _feature_tensor(
                 torch, estimates, measurements, nus, matrix_tensor, grid.h
             )
-            raw_gain = gain.network(features).reshape(
-                -1, grid.n, matrix.shape[0]
-            )
+            raw_gain = gain.network(features)
             gains = gain(features)
             correction = torch.bmm(gains, innovations[:, :, None]).squeeze(-1)
             rhs_truth = _allen_cahn_rhs_tensor(
@@ -1019,7 +1036,7 @@ def _defect_audit(
             saturation.append(
                 torch.mean(
                     (torch.abs(torch.tanh(raw_gain)) >= 0.95).to(torch.float32),
-                    dim=(1, 2),
+                    dim=1,
                 ).detach().cpu().numpy()
             )
             gain_deviation_ratios.append(
@@ -1233,6 +1250,7 @@ def run(
     gradient_clip_norm: float = 0.0,
     gain_trust_ratio: float = 0.0,
     gain_reg_weight: float = 0.0,
+    gain_kind: str = "dense",
     selection_mode: str = "rollout-first",
     run_defect_audit: bool = False,
     checkpoint_dir: Path | None = None,
@@ -1295,6 +1313,7 @@ def run(
                 certificate_learning_rate=certificate_learning_rate,
                 gradient_clip_norm=gradient_clip_norm,
                 gain_trust_ratio=gain_trust_ratio,
+                gain_kind=gain_kind,
             )
             validation_loss = _validation_loss(
                 torch,
@@ -1429,6 +1448,7 @@ def run(
                     "gradient_clip_norm": gradient_clip_norm,
                     "gain_trust_ratio": gain_trust_ratio,
                     "gain_reg_weight": gain_reg_weight,
+                    "gain_kind": gain_kind,
                 },
                 checkpoint_dir / f"grid-{grid_size}__seed-{best_seed}.pt",
             )
@@ -1462,6 +1482,7 @@ def run(
             "defect_weight": defect_weight,
             "bi_weight": bi_weight,
             "gain_reg_weight": gain_reg_weight,
+            "gain_kind": gain_kind,
             "lower_lipschitz": lower_lipschitz,
             "upper_lipschitz": upper_lipschitz,
             "certificate_kind": certificate_kind,
@@ -1516,6 +1537,7 @@ def run(
         "defect_weight": defect_weight,
         "bi_weight": bi_weight,
         "gain_reg_weight": gain_reg_weight,
+        "gain_kind": gain_kind,
         "lower_lipschitz": lower_lipschitz,
         "upper_lipschitz": upper_lipschitz,
         "certificate_kind": certificate_kind,
@@ -1583,6 +1605,9 @@ def main() -> None:
     parser.add_argument("--gradient-clip-norm", type=float, default=0.0)
     parser.add_argument("--gain-trust-ratio", type=float, default=0.0)
     parser.add_argument("--gain-reg-weight", type=float, default=0.0)
+    parser.add_argument(
+        "--gain-kind", choices=("dense", "mass-adjoint"), default="dense"
+    )
     parser.add_argument("--selection-limit", type=int, default=48)
     parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
     parser.add_argument(
@@ -1616,6 +1641,8 @@ def main() -> None:
         raise SystemExit("--gradient-clip-norm must be nonnegative")
     if args.gain_trust_ratio < 0.0 or args.gain_reg_weight < 0.0:
         raise SystemExit("gain trust ratio and regularization must be nonnegative")
+    if args.gain_kind == "mass-adjoint" and not 0.0 < args.gain_trust_ratio < 1.0:
+        raise SystemExit("mass-adjoint gain requires 0 < trust ratio < 1")
     if args.certificate_kind in {"givens", "triangular"}:
         if args.mixing_layers < 1:
             raise SystemExit("mixed certificate requires --mixing-layers >= 1")
@@ -1665,6 +1692,7 @@ def main() -> None:
         gradient_clip_norm=args.gradient_clip_norm,
         gain_trust_ratio=args.gain_trust_ratio,
         gain_reg_weight=args.gain_reg_weight,
+        gain_kind=args.gain_kind,
         refresh_interval=args.refresh_interval,
         selection_limit=args.selection_limit,
         selection_baseline_gain=args.selection_baseline_gain,

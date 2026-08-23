@@ -38,3 +38,5 @@
   and bounded online-rollout failure handling for the triangular structure screen.
 - Added a state-wise trust region and normalized deviation penalty around the initialized correction
   operator to keep the joint observer rollout in its numerically stable neighborhood.
+- Restricted the stage-two learned correction operator to positive state-conditioned sensor gains on
+  the physical mass-adjoint injection after norm-bounded dense corrections remained solver-unsafe.
