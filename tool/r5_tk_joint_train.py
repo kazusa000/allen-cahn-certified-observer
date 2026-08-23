@@ -34,6 +34,7 @@ class JointSampleSet:
     nus: np.ndarray
     nu_indices: np.ndarray
     nu_values: tuple[float, ...]
+    times: np.ndarray
     dt: float
 
 
@@ -46,6 +47,7 @@ def _assemble_sample_set(
     measurements: list[np.ndarray],
     next_states: list[np.ndarray],
     nus: list[float],
+    times: list[float],
     *,
     dt: float,
 ) -> JointSampleSet:
@@ -61,6 +63,24 @@ def _assemble_sample_set(
         nus=nu_array,
         nu_indices=nu_indices,
         nu_values=nu_values,
+        times=np.asarray(times, dtype=float),
+        dt=dt,
+    )
+
+
+def _concatenate_sample_sets(*sample_sets: JointSampleSet) -> JointSampleSet:
+    if not sample_sets:
+        raise ValueError("at least one sample set is required")
+    dt = sample_sets[0].dt
+    if any(not np.isclose(item.dt, dt) for item in sample_sets[1:]):
+        raise ValueError("sample sets must use the same time step")
+    return _assemble_sample_set(
+        [row for item in sample_sets for row in item.states],
+        [row for item in sample_sets for row in item.estimates],
+        [row for item in sample_sets for row in item.measurements],
+        [row for item in sample_sets for row in item.next_states],
+        [float(value) for item in sample_sets for value in item.nus],
+        [float(value) for item in sample_sets for value in item.times],
         dt=dt,
     )
 
@@ -85,6 +105,7 @@ def _collect_samples(
     measurements: list[np.ndarray] = []
     next_states: list[np.ndarray] = []
     nus: list[float] = []
+    times: list[float] = []
     dt = float(OUTPUT_TIMES[1] - OUTPUT_TIMES[0])
     for case in cases:
         rollout = simulate_causal_nudging(
@@ -98,12 +119,14 @@ def _collect_samples(
         measurements.extend(rollout.measurements[:-1])
         next_states.extend(rollout.truth[1:])
         nus.extend([case.nu] * (OUTPUT_TIMES.size - 1))
+        times.extend(OUTPUT_TIMES[:-1])
     return _assemble_sample_set(
         states,
         estimates,
         measurements,
         next_states,
         nus,
+        times,
         dt=dt,
     )
 
@@ -224,6 +247,7 @@ def _collect_policy_samples(
     measurements: list[np.ndarray] = []
     next_states: list[np.ndarray] = []
     nus: list[float] = []
+    times: list[float] = []
     dt = float(OUTPUT_TIMES[1] - OUTPUT_TIMES[0])
     for case in cases:
         truth, estimate, observed, status = _policy_rollout(
@@ -236,12 +260,14 @@ def _collect_policy_samples(
         measurements.extend(observed[:-1])
         next_states.extend(truth[1:])
         nus.extend([case.nu] * (OUTPUT_TIMES.size - 1))
+        times.extend(OUTPUT_TIMES[:-1])
     return _assemble_sample_set(
         states,
         estimates,
         measurements,
         next_states,
         nus,
+        times,
         dt=dt,
     )
 
@@ -283,6 +309,8 @@ def _build_models(
     certificate_scale: float,
     lower_lipschitz: float,
     upper_lipschitz: float,
+    certificate_kind: str = "diagonal",
+    mixing_layers: int = 0,
 ) -> tuple[object, object]:
     nn = torch.nn
     n = grid.n
@@ -315,25 +343,97 @@ def _build_models(
         def __init__(self) -> None:
             super().__init__()
             null_dimension = basis.shape[1]
+            if certificate_kind not in {"diagonal", "givens"}:
+                raise ValueError(f"unknown certificate kind: {certificate_kind}")
+            if certificate_kind == "givens" and mixing_layers < 1:
+                raise ValueError("givens certificate requires at least one mixing layer")
+            pair_count = null_dimension // 2
+            output_dimension = null_dimension
+            if certificate_kind == "givens":
+                output_dimension += mixing_layers * pair_count
             self.network = nn.Sequential(
                 nn.Linear(n, 128),
                 nn.Tanh(),
                 nn.Linear(128, 128),
                 nn.Tanh(),
-                nn.Linear(128, null_dimension),
+                nn.Linear(128, output_dimension),
             )
             nn.init.zeros_(self.network[-1].weight)
             nn.init.zeros_(self.network[-1].bias)
+            self.certificate_kind = certificate_kind
+            self.null_dimension = null_dimension
+            self.pair_count = pair_count
+            self.mixing_layers = mixing_layers
             self.register_buffer(
                 "null_basis", torch.as_tensor(basis, dtype=torch.float32)
             )
 
+        def _rotate(
+            self,
+            values: object,
+            angles: object,
+            layer: int,
+            *,
+            inverse: bool,
+        ) -> object:
+            shifted = torch.roll(values, shifts=-layer, dims=1)
+            left = shifted[:, : 2 * self.pair_count : 2]
+            right = shifted[:, 1 : 2 * self.pair_count : 2]
+            sine = torch.sin(angles)
+            if inverse:
+                sine = -sine
+            cosine = torch.cos(angles)
+            rotated_pairs = torch.stack(
+                (cosine * left - sine * right, sine * left + cosine * right),
+                dim=2,
+            ).reshape(values.shape[0], 2 * self.pair_count)
+            rotated = torch.cat(
+                (rotated_pairs, shifted[:, 2 * self.pair_count :]), dim=1
+            )
+            return torch.roll(rotated, shifts=layer, dims=1)
+
         def forward(self, states: object, errors: object) -> object:
             coordinates = errors @ self.null_basis
-            scales = lower_lipschitz + (
-                upper_lipschitz - lower_lipschitz
-            ) * torch.sigmoid(certificate_scale * self.network(states))
-            return errors + ((scales - 1.0) * coordinates) @ self.null_basis.T
+            raw = self.network(states)
+            if self.certificate_kind == "diagonal":
+                scales = lower_lipschitz + (
+                    upper_lipschitz - lower_lipschitz
+                ) * torch.sigmoid(certificate_scale * raw)
+                transformed_coordinates = scales * coordinates
+            else:
+                scale_fraction = (1.0 - lower_lipschitz) / (
+                    upper_lipschitz - lower_lipschitz
+                )
+                identity_logit = float(np.log(scale_fraction / (1.0 - scale_fraction)))
+                scales = lower_lipschitz + (
+                    upper_lipschitz - lower_lipschitz
+                ) * torch.sigmoid(
+                    identity_logit
+                    + certificate_scale * raw[:, : self.null_dimension]
+                )
+                angles = (np.pi / 4.0) * torch.tanh(
+                    certificate_scale
+                    * raw[:, self.null_dimension :].reshape(
+                        -1, self.mixing_layers, self.pair_count
+                    )
+                )
+                transformed_coordinates = coordinates
+                for layer in reversed(range(self.mixing_layers)):
+                    transformed_coordinates = self._rotate(
+                        transformed_coordinates,
+                        angles[:, layer],
+                        layer,
+                        inverse=True,
+                    )
+                transformed_coordinates = scales * transformed_coordinates
+                for layer in range(self.mixing_layers):
+                    transformed_coordinates = self._rotate(
+                        transformed_coordinates,
+                        angles[:, layer],
+                        layer,
+                        inverse=False,
+                    )
+            return errors + (transformed_coordinates - coordinates) @ self.null_basis.T
 
     return GainNet(), CertificateNet()
 
@@ -450,6 +550,9 @@ def _tensorize_samples(
         "nu_indices": torch.as_tensor(
             sample_set.nu_indices, dtype=torch.long, device=device
         ),
+        "times": torch.as_tensor(
+            sample_set.times, dtype=torch.float32, device=device
+        ),
         "laplacian": torch.as_tensor(
             grid.laplacian, dtype=torch.float32, device=device
         ),
@@ -478,6 +581,11 @@ def _train_one(
     lower_lipschitz: float,
     upper_lipschitz: float,
     refresh_interval: int,
+    certificate_kind: str = "diagonal",
+    mixing_layers: int = 0,
+    replay_snapshots: int = 0,
+    gain_warmup_epochs: int = 0,
+    certificate_warmup_epochs: int = 0,
 ) -> tuple[object, object, dict[str, float | int]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
@@ -491,6 +599,8 @@ def _train_one(
         certificate_scale=certificate_scale,
         lower_lipschitz=lower_lipschitz,
         upper_lipschitz=upper_lipschitz,
+        certificate_kind=certificate_kind,
+        mixing_layers=mixing_layers,
     )
     gain.to(device)
     certificate.to(device)
@@ -513,13 +623,28 @@ def _train_one(
     history: list[dict[str, float]] = []
     sample_count = samples["states"].shape[0]
     refresh_count = 0
+    policy_replay: list[JointSampleSet] = []
     for epoch in range(epochs):
+        gain_active = epoch < gain_warmup_epochs or epoch >= (
+            gain_warmup_epochs + certificate_warmup_epochs
+        )
+        certificate_active = epoch >= gain_warmup_epochs
+        for parameter in gain.parameters():
+            parameter.requires_grad_(gain_active)
+        for parameter in certificate.parameters():
+            parameter.requires_grad_(certificate_active)
         if epoch > 0 and refresh_interval > 0 and epoch % refresh_interval == 0:
             gain.eval()
             refreshed = _collect_policy_samples(
                 torch, gain, device, train_cases, grid, matrix
             )
-            samples = _tensorize_samples(torch, refreshed, grid, device)
+            if replay_snapshots > 0:
+                policy_replay.append(refreshed)
+                policy_replay = policy_replay[-replay_snapshots:]
+                replay = _concatenate_sample_sets(train, *policy_replay)
+            else:
+                replay = refreshed
+            samples = _tensorize_samples(torch, replay, grid, device)
             sample_count = samples["states"].shape[0]
             gain.train()
             certificate.train()
@@ -597,6 +722,8 @@ def _train_one(
             "total_initial_last_batch_loss": history[0]["total"],
             "total_final_last_batch_loss": history[-1]["total"],
             "on_policy_refresh_count": refresh_count,
+            "training_sample_count": int(sample_count),
+            "replay_snapshot_count": len(policy_replay),
         },
     )
 
@@ -651,6 +778,186 @@ def _validation_loss(
             name: float(value.detach().cpu().item())
             for name, value in components.items()
         }
+
+
+def _ratio_summary(values: np.ndarray) -> dict[str, float | int]:
+    if values.size == 0:
+        return {"count": 0, "rms": float("nan"), "median": float("nan"),
+                "p95": float("nan"), "max": float("nan")}
+    return {
+        "count": int(values.size),
+        "rms": float(np.sqrt(np.mean(values**2))),
+        "median": float(np.median(values)),
+        "p95": float(np.quantile(values, 0.95)),
+        "max": float(np.max(values)),
+    }
+
+
+def _defect_audit(
+    torch: object,
+    gain: object,
+    certificate: object,
+    sample_set: JointSampleSet,
+    grid: AllenCahnGrid,
+    matrix: np.ndarray,
+    *,
+    lambda_ratio: float,
+    lower_lipschitz: float,
+    gain_scale: float,
+    device: str,
+    batch_size: int = 512,
+) -> dict[str, object]:
+    samples = _tensorize_samples(torch, sample_set, grid, device)
+    target_generators, _target_maps = _target_operators(
+        grid, sample_set.nu_values, lambda_ratio
+    )
+    target_generators_tensor = torch.as_tensor(
+        target_generators, dtype=torch.float32, device=device
+    )
+    matrix_tensor = torch.as_tensor(matrix, dtype=torch.float32, device=device)
+    ratios: list[np.ndarray] = []
+    identity_ratios: list[np.ndarray] = []
+    no_correction_ratios: list[np.ndarray] = []
+    error_norms: list[np.ndarray] = []
+    innovation_norms: list[np.ndarray] = []
+    saturation: list[np.ndarray] = []
+    count = samples["states"].shape[0]
+    with torch.enable_grad():
+        for start in range(0, count, batch_size):
+            indices = torch.arange(
+                start, min(start + batch_size, count), device=device
+            )
+            states = samples["states"][indices]
+            estimates = samples["estimates"][indices]
+            measurements = samples["measurements"][indices]
+            nus = samples["nus"][indices]
+            nu_indices = samples["nu_indices"][indices]
+            features, innovations = _feature_tensor(
+                torch, estimates, measurements, nus, matrix_tensor, grid.h
+            )
+            raw_gain = gain.network(features).reshape(
+                -1, grid.n, matrix.shape[0]
+            )
+            gains = gain.base_gain[None, :, :] + gain_scale * torch.tanh(raw_gain)
+            correction = torch.bmm(gains, innovations[:, :, None]).squeeze(-1)
+            rhs_truth = _allen_cahn_rhs_tensor(
+                torch, grid, states, nus, samples["laplacian"]
+            )
+            rhs_estimate = _allen_cahn_rhs_tensor(
+                torch, grid, estimates, nus, samples["laplacian"]
+            )
+            errors = estimates - states
+            error_rhs = rhs_estimate + correction - rhs_truth
+            error_rhs_no_correction = rhs_estimate - rhs_truth
+
+            def transform(state: object, error: object) -> object:
+                return certificate(state, error)
+
+            transformed = certificate(states, errors)
+            _, directional = torch.autograd.functional.jvp(
+                transform,
+                (states, errors),
+                (rhs_truth, error_rhs),
+                create_graph=False,
+            )
+            _, directional_no_correction = torch.autograd.functional.jvp(
+                transform,
+                (states, errors),
+                (rhs_truth, error_rhs_no_correction),
+                create_graph=False,
+            )
+            generator = torch.bmm(
+                target_generators_tensor[nu_indices], transformed[:, :, None]
+            ).squeeze(-1)
+            identity_generator = torch.bmm(
+                target_generators_tensor[nu_indices], errors[:, :, None]
+            ).squeeze(-1)
+            error_squared_mass = grid.h * torch.sum(errors**2, dim=1)
+
+            def relative_norm(
+                residual: object, denominator: object = error_squared_mass
+            ) -> object:
+                squared_mass = grid.h * torch.sum(residual**2, dim=1)
+                return torch.sqrt(squared_mass / (denominator + 1.0e-8))
+
+            ratios.append(
+                relative_norm(directional - generator).detach().cpu().numpy()
+            )
+            identity_ratios.append(
+                relative_norm(error_rhs - identity_generator).detach().cpu().numpy()
+            )
+            no_correction_ratios.append(
+                relative_norm(directional_no_correction - generator)
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            error_norms.append(
+                torch.sqrt(error_squared_mass).detach().cpu().numpy()
+            )
+            innovation_norms.append(
+                torch.linalg.vector_norm(innovations, dim=1).detach().cpu().numpy()
+            )
+            saturation.append(
+                torch.mean(
+                    (torch.abs(torch.tanh(raw_gain)) >= 0.95).to(torch.float32),
+                    dim=(1, 2),
+                ).detach().cpu().numpy()
+            )
+
+    ratio_values = np.concatenate(ratios)
+    identity_values = np.concatenate(identity_ratios)
+    no_correction_values = np.concatenate(no_correction_ratios)
+    error_values = np.concatenate(error_norms)
+    innovation_values = np.concatenate(innovation_norms)
+    saturation_values = np.concatenate(saturation)
+    by_nu: dict[str, object] = {}
+    for nu_index, nu in enumerate(sample_set.nu_values):
+        mask = sample_set.nu_indices == nu_index
+        alpha = float(-np.max(np.linalg.eigvalsh(target_generators[nu_index])))
+        threshold = lower_lipschitz * alpha
+        summary = _ratio_summary(ratio_values[mask])
+        by_nu[f"{nu:.6g}"] = {
+            **summary,
+            "target_slowest_decay": alpha,
+            "conservative_defect_threshold": threshold,
+            "rms_gate_passed": bool(summary["rms"] < threshold),
+            "sample_max_gate_passed": bool(summary["max"] < threshold),
+        }
+    time_masks = {
+        "early": sample_set.times < 0.25,
+        "middle": (sample_set.times >= 0.25) & (sample_set.times < 0.75),
+        "late": sample_set.times >= 0.75,
+    }
+    lower_error, upper_error = np.quantile(error_values, [0.25, 0.75])
+    error_masks = {
+        "small": error_values <= lower_error,
+        "middle": (error_values > lower_error) & (error_values < upper_error),
+        "large": error_values >= upper_error,
+    }
+    return {
+        "overall": _ratio_summary(ratio_values),
+        "identity_transform": _ratio_summary(identity_values),
+        "without_observer_correction": _ratio_summary(no_correction_values),
+        "by_nu": by_nu,
+        "by_time": {
+            name: _ratio_summary(ratio_values[mask])
+            for name, mask in time_masks.items()
+        },
+        "by_error_size": {
+            name: _ratio_summary(ratio_values[mask])
+            for name, mask in error_masks.items()
+        },
+        "error_norm": _ratio_summary(error_values),
+        "innovation_norm": _ratio_summary(innovation_values),
+        "gain_saturation_fraction_mean": float(np.mean(saturation_values)),
+        "all_rms_gates_passed": bool(
+            all(item["rms_gate_passed"] for item in by_nu.values())
+        ),
+        "all_sample_max_gates_passed": bool(
+            all(item["sample_max_gate_passed"] for item in by_nu.values())
+        ),
+    }
 
 
 def _simulate(
@@ -773,7 +1080,17 @@ def run(
     refresh_interval: int,
     selection_limit: int,
     selection_baseline_gain: float,
+    certificate_kind: str = "diagonal",
+    mixing_layers: int = 0,
+    replay_snapshots: int = 0,
+    gain_warmup_epochs: int = 0,
+    certificate_warmup_epochs: int = 0,
+    selection_mode: str = "rollout-first",
+    run_defect_audit: bool = False,
+    checkpoint_dir: Path | None = None,
 ) -> dict[str, object]:
+    if checkpoint_dir is not None:
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, object]] = []
     for grid_size in grid_sizes:
         grid = AllenCahnGrid(grid_size)
@@ -818,6 +1135,11 @@ def run(
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
                 refresh_interval=refresh_interval,
+                certificate_kind=certificate_kind,
+                mixing_layers=mixing_layers,
+                replay_snapshots=replay_snapshots,
+                gain_warmup_epochs=gain_warmup_epochs,
+                certificate_warmup_epochs=certificate_warmup_epochs,
             )
             validation_loss = _validation_loss(
                 torch,
@@ -866,15 +1188,85 @@ def run(
             and item["certificate_audit"]["max_zero_fiber_residual"] <= 1.0e-7
             and item["certificate_audit"]["max_direction_residual"] <= 1.0e-7
         ]
-        best = min(
-            eligible or seed_results,
-            key=lambda item: (
+        if selection_mode == "defect-first":
+            selection_key = lambda item: (
+                item["defect_validation_loss"],
+                item["validation_median_terminal_error_mass"],
+            )
+        elif selection_mode == "rollout-first":
+            selection_key = lambda item: (
                 item["validation_median_terminal_error_mass"],
                 item["total_validation_loss"],
-            ),
-        )
+            )
+        else:
+            raise ValueError(f"unknown selection mode: {selection_mode}")
+        best = min(eligible or seed_results, key=selection_key)
         best_seed = int(best["seed"])
         gain, certificate = models[best_seed]
+        defect_audits: dict[str, object] = {}
+        on_policy_validation_loss: dict[str, float] | None = None
+        if run_defect_audit:
+            train_policy = _collect_policy_samples(
+                torch, gain, device, train_cases, grid, matrix
+            )
+            validation_policy = _collect_policy_samples(
+                torch, gain, device, validation_cases, grid, matrix
+            )
+            on_policy_validation_loss = _validation_loss(
+                torch,
+                gain,
+                certificate,
+                validation_policy,
+                grid,
+                matrix,
+                lambda_ratio=lambda_ratio,
+                stable_normalization=stable_normalization,
+                defect_weight=defect_weight,
+                bi_weight=bi_weight,
+                lower_lipschitz=lower_lipschitz,
+                upper_lipschitz=upper_lipschitz,
+                device=device,
+            )
+            audit_sets = {
+                "fixed_gain_train": train,
+                "current_observer_train": train_policy,
+                "fixed_gain_validation": validation,
+                "current_observer_validation": validation_policy,
+            }
+            defect_audits = {
+                name: _defect_audit(
+                    torch,
+                    gain,
+                    certificate,
+                    sample_set,
+                    grid,
+                    matrix,
+                    lambda_ratio=lambda_ratio,
+                    lower_lipschitz=lower_lipschitz,
+                    gain_scale=gain_scale,
+                    device=device,
+                    batch_size=batch_size,
+                )
+                for name, sample_set in audit_sets.items()
+            }
+        if checkpoint_dir is not None:
+            torch.save(
+                {
+                    "grid_size": grid_size,
+                    "seed": best_seed,
+                    "gain_state_dict": gain.state_dict(),
+                    "certificate_state_dict": certificate.state_dict(),
+                    "certificate_kind": certificate_kind,
+                    "mixing_layers": mixing_layers,
+                    "lower_lipschitz": lower_lipschitz,
+                    "upper_lipschitz": upper_lipschitz,
+                    "base_gain": base_gain,
+                    "gain_scale": gain_scale,
+                    "certificate_scale": certificate_scale,
+                    "lambda_ratio": lambda_ratio,
+                },
+                checkpoint_dir / f"grid-{grid_size}__seed-{best_seed}.pt",
+            )
         replay = [
             _simulate(torch, gain, device, grid, matrix, case)
             for case in test_cases[:eval_limit]
@@ -905,6 +1297,11 @@ def run(
             "bi_weight": bi_weight,
             "lower_lipschitz": lower_lipschitz,
             "upper_lipschitz": upper_lipschitz,
+            "certificate_kind": certificate_kind,
+            "mixing_layers": mixing_layers,
+            "replay_snapshots": replay_snapshots,
+            "gain_warmup_epochs": gain_warmup_epochs,
+            "certificate_warmup_epochs": certificate_warmup_epochs,
             "refresh_interval": refresh_interval,
             "selection_limit": selection_limit,
             "selection_baseline_gain": selection_baseline_gain,
@@ -922,6 +1319,8 @@ def run(
                 noisy_replay, "terminal_error_mass"
             ),
             "certificate_audit": best["certificate_audit"],
+            "defect_audits": defect_audits,
+            "on_policy_validation_loss": on_policy_validation_loss,
         }
         results.append(grid_result)
         print(
@@ -945,6 +1344,13 @@ def run(
         "bi_weight": bi_weight,
         "lower_lipschitz": lower_lipschitz,
         "upper_lipschitz": upper_lipschitz,
+        "certificate_kind": certificate_kind,
+        "mixing_layers": mixing_layers,
+        "replay_snapshots": replay_snapshots,
+        "gain_warmup_epochs": gain_warmup_epochs,
+        "certificate_warmup_epochs": certificate_warmup_epochs,
+        "selection_mode": selection_mode,
+        "run_defect_audit": run_defect_audit,
         "refresh_interval": refresh_interval,
         "selection_limit": selection_limit,
         "selection_baseline_gain": selection_baseline_gain,
@@ -973,6 +1379,10 @@ def main() -> None:
     parser.add_argument("--gain-scale", type=float, default=0.5)
     parser.add_argument("--certificate-scale", type=float, default=1.0)
     parser.add_argument(
+        "--certificate-kind", choices=("diagonal", "givens"), default="diagonal"
+    )
+    parser.add_argument("--mixing-layers", type=int, default=0)
+    parser.add_argument(
         "--stable-normalization",
         choices=("none", "error-time"),
         default="error-time",
@@ -982,8 +1392,18 @@ def main() -> None:
     parser.add_argument("--lower-lipschitz", type=float, default=0.5)
     parser.add_argument("--upper-lipschitz", type=float, default=2.0)
     parser.add_argument("--refresh-interval", type=int, default=50)
+    parser.add_argument("--replay-snapshots", type=int, default=0)
+    parser.add_argument("--gain-warmup-epochs", type=int, default=0)
+    parser.add_argument("--certificate-warmup-epochs", type=int, default=0)
     parser.add_argument("--selection-limit", type=int, default=48)
     parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
+    parser.add_argument(
+        "--selection-mode",
+        choices=("rollout-first", "defect-first"),
+        default="rollout-first",
+    )
+    parser.add_argument("--run-defect-audit", action="store_true")
+    parser.add_argument("--checkpoint-dir", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     import torch
@@ -996,6 +1416,17 @@ def main() -> None:
         raise SystemExit("lipschitz bounds must satisfy 0 < lower <= upper")
     if args.refresh_interval < 0:
         raise SystemExit("--refresh-interval must be nonnegative")
+    if args.replay_snapshots < 0:
+        raise SystemExit("--replay-snapshots must be nonnegative")
+    if args.gain_warmup_epochs < 0 or args.certificate_warmup_epochs < 0:
+        raise SystemExit("warmup epochs must be nonnegative")
+    if args.gain_warmup_epochs + args.certificate_warmup_epochs > args.epochs:
+        raise SystemExit("warmup epochs must not exceed total epochs")
+    if args.certificate_kind == "givens":
+        if args.mixing_layers < 1:
+            raise SystemExit("givens certificate requires --mixing-layers >= 1")
+        if not args.lower_lipschitz < 1.0 < args.upper_lipschitz:
+            raise SystemExit("givens certificate bounds must strictly contain 1")
     if args.selection_limit < 1:
         raise SystemExit("--selection-limit must be positive")
     if args.selection_baseline_gain < 0.0:
@@ -1021,9 +1452,17 @@ def main() -> None:
         bi_weight=args.bi_weight,
         lower_lipschitz=args.lower_lipschitz,
         upper_lipschitz=args.upper_lipschitz,
+        certificate_kind=args.certificate_kind,
+        mixing_layers=args.mixing_layers,
+        replay_snapshots=args.replay_snapshots,
+        gain_warmup_epochs=args.gain_warmup_epochs,
+        certificate_warmup_epochs=args.certificate_warmup_epochs,
         refresh_interval=args.refresh_interval,
         selection_limit=args.selection_limit,
         selection_baseline_gain=args.selection_baseline_gain,
+        selection_mode=args.selection_mode,
+        run_defect_audit=args.run_defect_audit,
+        checkpoint_dir=args.checkpoint_dir,
     )
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"grid_count": len(result["results"]), "device": args.device}))

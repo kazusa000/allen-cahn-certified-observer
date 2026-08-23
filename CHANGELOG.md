@@ -28,3 +28,6 @@
   stable loss, added current-observer trajectory refresh, and added validation-rollout model selection.
 - Completed the 2060 screening and formal multi-grid replay for the corrected target; the selected
   observer improved noiseless held-out error on all three grids while the dynamics defect remained open.
+- Added the pre-registered R5 dynamics-defect repair screen with mixed trajectory replay, structurally
+  invertible Givens nullspace mixing, staged-to-joint training, checkpoint persistence, and split-wise
+  defect-distribution audits.
