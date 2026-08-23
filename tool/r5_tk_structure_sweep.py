@@ -98,7 +98,7 @@ def main() -> None:
                 gradient_clip_norm=1.0,
                 gain_trust_ratio=float(configuration["gain_trust_ratio"]),
                 gain_reg_weight=1.0,
-                gain_kind="mass-adjoint",
+                gain_kind="mass-adjoint-constant",
                 selection_mode="defect-first",
                 run_defect_audit=True,
                 checkpoint_dir=args.checkpoint_dir / name,

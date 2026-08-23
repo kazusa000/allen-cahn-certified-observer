@@ -338,23 +338,34 @@ def _build_models(
     feature_dim = n + 2 * q + 2
     basis = NullspaceCertificate(matrix).null_basis
     row_basis = np.linalg.qr(matrix.T, mode="reduced")[0]
-    if gain_kind not in {"dense", "mass-adjoint"}:
+    if gain_kind not in {"dense", "mass-adjoint", "mass-adjoint-constant"}:
         raise ValueError(f"unknown gain kind: {gain_kind}")
-    if gain_kind == "mass-adjoint" and not 0.0 < gain_trust_ratio < 1.0:
+    if gain_kind.startswith("mass-adjoint") and not 0.0 < gain_trust_ratio < 1.0:
         raise ValueError("mass-adjoint gain requires 0 < trust ratio < 1")
+
+    class ConstantSensorGain(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.logits = nn.Parameter(torch.zeros(q, dtype=torch.float32))
+
+        def forward(self, features: object) -> object:
+            return self.logits[None, :].expand(features.shape[0], -1)
 
     class GainNet(nn.Module):
         def __init__(self) -> None:
             super().__init__()
-            self.network = nn.Sequential(
-                nn.Linear(feature_dim, 128),
-                nn.Tanh(),
-                nn.Linear(128, 128),
-                nn.Tanh(),
-                nn.Linear(128, n * q if gain_kind == "dense" else q),
-            )
-            nn.init.zeros_(self.network[-1].weight)
-            nn.init.zeros_(self.network[-1].bias)
+            if gain_kind == "mass-adjoint-constant":
+                self.network = ConstantSensorGain()
+            else:
+                self.network = nn.Sequential(
+                    nn.Linear(feature_dim, 128),
+                    nn.Tanh(),
+                    nn.Linear(128, 128),
+                    nn.Tanh(),
+                    nn.Linear(128, n * q if gain_kind == "dense" else q),
+                )
+                nn.init.zeros_(self.network[-1].weight)
+                nn.init.zeros_(self.network[-1].bias)
             self.register_buffer(
                 "base_gain",
                 torch.as_tensor(base_gain * matrix.T / grid.h, dtype=torch.float32),
@@ -372,7 +383,7 @@ def _build_models(
 
         def forward(self, features: object) -> object:
             raw = self.network(features)
-            if self.gain_kind == "mass-adjoint":
+            if self.gain_kind.startswith("mass-adjoint"):
                 sensor_gain = base_gain * (
                     1.0 + self.gain_trust_ratio * torch.tanh(raw)
                 )
@@ -1606,7 +1617,9 @@ def main() -> None:
     parser.add_argument("--gain-trust-ratio", type=float, default=0.0)
     parser.add_argument("--gain-reg-weight", type=float, default=0.0)
     parser.add_argument(
-        "--gain-kind", choices=("dense", "mass-adjoint"), default="dense"
+        "--gain-kind",
+        choices=("dense", "mass-adjoint", "mass-adjoint-constant"),
+        default="dense",
     )
     parser.add_argument("--selection-limit", type=int, default=48)
     parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
@@ -1641,7 +1654,9 @@ def main() -> None:
         raise SystemExit("--gradient-clip-norm must be nonnegative")
     if args.gain_trust_ratio < 0.0 or args.gain_reg_weight < 0.0:
         raise SystemExit("gain trust ratio and regularization must be nonnegative")
-    if args.gain_kind == "mass-adjoint" and not 0.0 < args.gain_trust_ratio < 1.0:
+    if args.gain_kind.startswith("mass-adjoint") and not (
+        0.0 < args.gain_trust_ratio < 1.0
+    ):
         raise SystemExit("mass-adjoint gain requires 0 < trust ratio < 1")
     if args.certificate_kind in {"givens", "triangular"}:
         if args.mixing_layers < 1:

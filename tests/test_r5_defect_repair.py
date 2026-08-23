@@ -160,7 +160,7 @@ def test_gain_trust_region_bounds_state_conditioned_deviation() -> None:
     assert torch.all(deviation < 0.25 * gain.base_gain_norm)
 
 
-def test_mass_adjoint_gain_keeps_positive_sensor_injection_structure() -> None:
+def test_constant_mass_adjoint_gain_keeps_positive_sensor_injection_structure() -> None:
     torch = pytest.importorskip("torch")
     grid = AllenCahnGrid(15)
     matrix = local_average_matrix(grid, INTERVALS)
@@ -174,10 +174,9 @@ def test_mass_adjoint_gain_keeps_positive_sensor_injection_structure() -> None:
         lower_lipschitz=0.5,
         upper_lipschitz=2.0,
         gain_trust_ratio=0.5,
-        gain_kind="mass-adjoint",
+        gain_kind="mass-adjoint-constant",
     )
-    torch.nn.init.normal_(gain.network[-1].weight, std=0.2)
-    torch.nn.init.normal_(gain.network[-1].bias, std=0.2)
+    torch.nn.init.normal_(gain.network.logits, std=0.2)
     features = torch.randn((8, grid.n + 2 * matrix.shape[0] + 2))
 
     learned = gain(features)
@@ -187,3 +186,4 @@ def test_mass_adjoint_gain_keeps_positive_sensor_injection_structure() -> None:
     assert torch.all(learned[:, ~support] == 0.0)
     assert torch.all(ratios > 0.5)
     assert torch.all(ratios < 1.5)
+    assert torch.allclose(learned[0], learned[-1])
