@@ -25,15 +25,15 @@ CONFIGURATIONS = (
         "gain_scale": 0.5,
     },
     {
-        "name": "triangular-defect-focus",
+        "name": "triangular-balanced",
         "replay_snapshots": 2,
-        "stable_weight": 0.1,
+        "stable_weight": 0.5,
         "gain_scale": 0.5,
     },
     {
-        "name": "triangular-defect-focus-wide-gain",
+        "name": "triangular-wide-gain",
         "replay_snapshots": 2,
-        "stable_weight": 0.1,
+        "stable_weight": 1.0,
         "gain_scale": 1.0,
     },
 )
@@ -60,7 +60,8 @@ def main() -> None:
     for configuration in CONFIGURATIONS:
         name = str(configuration["name"])
         print(f"[tk-structure-screen] configuration={name}", flush=True)
-        result = run(
+        try:
+            result = run(
             torch,
             [31],
             args.seeds,
@@ -89,7 +90,17 @@ def main() -> None:
             selection_mode="defect-first",
             run_defect_audit=True,
             checkpoint_dir=args.checkpoint_dir / name,
-        )
+            )
+        except RuntimeError as error:
+            print(f"[tk-structure-screen] failed={name}: {error}", flush=True)
+            runs.append(
+                {
+                    "configuration": configuration,
+                    "run_status": "failed",
+                    "failure": str(error),
+                }
+            )
+            continue
         grid = result["results"][0]
         selected_seed_result = next(
             item
@@ -102,6 +113,7 @@ def main() -> None:
         runs.append(
             {
                 "configuration": configuration,
+                "run_status": "completed",
                 "fixed_gain_validation_defect_rms": fixed_rms,
                 "current_observer_validation_defect_rms": current_rms,
                 "worst_validation_defect_rms": max(fixed_rms, current_rms),
@@ -121,15 +133,32 @@ def main() -> None:
             }
         )
 
+    completed = [item for item in runs if item["run_status"] == "completed"]
+    if not completed:
+        output = {
+            "kind": "r5-tk-triangular-structure-screen",
+            "pre_registered_configurations": CONFIGURATIONS,
+            "seeds": args.seeds,
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "device": args.device,
+            "status": "all-configurations-failed",
+            "runs": runs,
+        }
+        args.output.write_text(
+            json.dumps(output, indent=2) + "\n", encoding="utf-8"
+        )
+        print(json.dumps({"status": output["status"]}), flush=True)
+        return
     eligible = [
         item
-        for item in runs
+        for item in completed
         if item["certificate_constraints_passed"]
         and item["validation_median_terminal_error_mass"]
         <= item["selection_baseline_median_terminal_error_mass"]
     ]
     selected = min(
-        eligible or runs,
+        eligible or completed,
         key=lambda item: (
             item["worst_validation_defect_rms"],
             item["validation_median_terminal_error_mass"],

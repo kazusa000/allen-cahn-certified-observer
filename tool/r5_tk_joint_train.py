@@ -39,6 +39,11 @@ class JointSampleSet:
 
 
 ABLATION_SEEDS = (501, 502, 503, 504)
+MAX_POLICY_RHS_EVALUATIONS = 20_000
+
+
+class PolicyRolloutBudgetExceeded(RuntimeError):
+    """Raised when an adaptive policy rollout becomes computationally unsafe."""
 
 
 def _assemble_sample_set(
@@ -186,8 +191,15 @@ def _policy_rollout(
     noise: object = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     n = grid.n
+    rhs_evaluations = 0
 
     def rhs(time: float, combined: np.ndarray) -> np.ndarray:
+        nonlocal rhs_evaluations
+        rhs_evaluations += 1
+        if rhs_evaluations > MAX_POLICY_RHS_EVALUATIONS:
+            raise PolicyRolloutBudgetExceeded(
+                f"policy rollout exceeded {MAX_POLICY_RHS_EVALUATIONS} RHS evaluations"
+            )
         truth, estimate = combined[:n], combined[n:]
         measurement = matrix @ truth
         if noise is not None:
@@ -208,15 +220,20 @@ def _policy_rollout(
             )
         )
 
-    result = solve_ivp(
-        rhs,
-        (0.0, 1.0),
-        np.concatenate((case.initial_truth(grid), case.initial_estimate(grid))),
-        method="DOP853",
-        t_eval=OUTPUT_TIMES,
-        rtol=1.0e-8,
-        atol=1.0e-10,
-    )
+    try:
+        result = solve_ivp(
+            rhs,
+            (0.0, 1.0),
+            np.concatenate((case.initial_truth(grid), case.initial_estimate(grid))),
+            method="DOP853",
+            t_eval=OUTPUT_TIMES,
+            rtol=1.0e-8,
+            atol=1.0e-10,
+        )
+    except PolicyRolloutBudgetExceeded:
+        empty_states = np.empty((0, n), dtype=float)
+        empty_measurements = np.empty((0, matrix.shape[0]), dtype=float)
+        return empty_states, empty_states.copy(), empty_measurements, -2
     trajectories = result.y.T
     truth = trajectories[:, :n]
     estimate = trajectories[:, n:]
@@ -1029,6 +1046,8 @@ def _simulate(
         case,
         noise=noise,
     )
+    if solver_status != 0 or truth.shape[0] != OUTPUT_TIMES.size:
+        raise RuntimeError("online observer rollout exceeded its solver budget")
     error = estimate - truth
     error_mass = np.sqrt(grid.h * np.sum(error**2, axis=1))
     energies = np.asarray(
