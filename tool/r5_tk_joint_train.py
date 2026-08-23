@@ -329,6 +329,7 @@ def _build_models(
     certificate_kind: str = "diagonal",
     mixing_layers: int = 0,
     shear_norm_limit: float = 0.0,
+    gain_trust_ratio: float = 0.0,
 ) -> tuple[object, object]:
     nn = torch.nn
     n = grid.n
@@ -353,10 +354,23 @@ def _build_models(
                 "base_gain",
                 torch.as_tensor(base_gain * matrix.T / grid.h, dtype=torch.float32),
             )
+            self.register_buffer(
+                "base_gain_norm",
+                torch.linalg.vector_norm(self.base_gain),
+            )
+            self.gain_trust_ratio = gain_trust_ratio
 
         def forward(self, features: object) -> object:
             raw = self.network(features).reshape(-1, n, q)
-            return self.base_gain[None, :, :] + gain_scale * torch.tanh(raw)
+            delta = gain_scale * torch.tanh(raw)
+            if self.gain_trust_ratio > 0.0:
+                delta_norm = torch.linalg.vector_norm(
+                    delta, dim=(1, 2), keepdim=True
+                )
+                limit = self.gain_trust_ratio * self.base_gain_norm
+                scale = limit / (limit + delta_norm)
+                delta = scale * delta
+            return self.base_gain[None, :, :] + delta
 
     class CertificateNet(nn.Module):
         def __init__(self) -> None:
@@ -510,6 +524,7 @@ def _joint_loss_components(
     stable_weight: float,
     defect_weight: float,
     bi_weight: float,
+    gain_reg_weight: float,
     lower_lipschitz: float,
     upper_lipschitz: float,
 ) -> dict[str, object]:
@@ -573,16 +588,22 @@ def _joint_loss_components(
     lower_violation = torch.relu(lower_lipschitz * error_norm - transformed_norm)
     upper_violation = torch.relu(transformed_norm - upper_lipschitz * error_norm)
     bi_loss = torch.mean(lower_violation**2 + upper_violation**2)
+    gain_deviation_loss = torch.mean(
+        torch.sum((gains - gain.base_gain[None, :, :]) ** 2, dim=(1, 2))
+        / (gain.base_gain_norm**2 + 1.0e-12)
+    )
     total_loss = (
         stable_weight * stable_loss
         + defect_weight * defect_loss
         + bi_weight * bi_loss
+        + gain_reg_weight * gain_deviation_loss
     )
     return {
         "stable": stable_loss,
         "stable_raw": stable_raw_loss,
         "defect": defect_loss,
         "bi": bi_loss,
+        "gain_deviation": gain_deviation_loss,
         "total": total_loss,
     }
 
@@ -639,6 +660,7 @@ def _train_one(
     stable_weight: float,
     defect_weight: float,
     bi_weight: float,
+    gain_reg_weight: float,
     lower_lipschitz: float,
     upper_lipschitz: float,
     refresh_interval: int,
@@ -651,6 +673,7 @@ def _train_one(
     gain_learning_rate: float = 2.0e-3,
     certificate_learning_rate: float = 2.0e-3,
     gradient_clip_norm: float = 0.0,
+    gain_trust_ratio: float = 0.0,
 ) -> tuple[object, object, dict[str, float | int]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
@@ -667,6 +690,7 @@ def _train_one(
         certificate_kind=certificate_kind,
         mixing_layers=mixing_layers,
         shear_norm_limit=shear_norm_limit,
+        gain_trust_ratio=gain_trust_ratio,
     )
     gain.to(device)
     certificate.to(device)
@@ -738,6 +762,7 @@ def _train_one(
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
+                gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
             )
@@ -774,6 +799,7 @@ def _train_one(
             stable_weight=stable_weight,
             defect_weight=defect_weight,
             bi_weight=bi_weight,
+            gain_reg_weight=gain_reg_weight,
             lower_lipschitz=lower_lipschitz,
             upper_lipschitz=upper_lipschitz,
         )
@@ -789,6 +815,7 @@ def _train_one(
             "stable_raw_training_loss": final_losses["stable_raw"],
             "defect_training_loss": final_losses["defect"],
             "bi_training_loss": final_losses["bi"],
+            "gain_deviation_training_loss": final_losses["gain_deviation"],
             "total_training_loss": final_losses["total"],
             "stable_initial_last_batch_loss": history[0]["stable"],
             "stable_final_last_batch_loss": history[-1]["stable"],
@@ -798,6 +825,8 @@ def _train_one(
             "defect_final_last_batch_loss": history[-1]["defect"],
             "bi_initial_last_batch_loss": history[0]["bi"],
             "bi_final_last_batch_loss": history[-1]["bi"],
+            "gain_deviation_initial_last_batch_loss": history[0]["gain_deviation"],
+            "gain_deviation_final_last_batch_loss": history[-1]["gain_deviation"],
             "total_initial_last_batch_loss": history[0]["total"],
             "total_final_last_batch_loss": history[-1]["total"],
             "on_policy_refresh_count": refresh_count,
@@ -806,6 +835,8 @@ def _train_one(
             "gain_learning_rate": gain_learning_rate,
             "certificate_learning_rate": certificate_learning_rate,
             "gradient_clip_norm": gradient_clip_norm,
+            "gain_trust_ratio": gain_trust_ratio,
+            "gain_reg_weight": gain_reg_weight,
         },
     )
 
@@ -823,6 +854,7 @@ def _validation_loss(
     stable_weight: float,
     defect_weight: float,
     bi_weight: float,
+    gain_reg_weight: float,
     lower_lipschitz: float,
     upper_lipschitz: float,
     device: str,
@@ -855,6 +887,7 @@ def _validation_loss(
             stable_weight=stable_weight,
             defect_weight=defect_weight,
             bi_weight=bi_weight,
+            gain_reg_weight=gain_reg_weight,
             lower_lipschitz=lower_lipschitz,
             upper_lipschitz=upper_lipschitz,
         )
@@ -905,6 +938,7 @@ def _defect_audit(
     error_norms: list[np.ndarray] = []
     innovation_norms: list[np.ndarray] = []
     saturation: list[np.ndarray] = []
+    gain_deviation_ratios: list[np.ndarray] = []
     count = samples["states"].shape[0]
     with torch.enable_grad():
         for start in range(0, count, batch_size):
@@ -922,7 +956,7 @@ def _defect_audit(
             raw_gain = gain.network(features).reshape(
                 -1, grid.n, matrix.shape[0]
             )
-            gains = gain.base_gain[None, :, :] + gain_scale * torch.tanh(raw_gain)
+            gains = gain(features)
             correction = torch.bmm(gains, innovations[:, :, None]).squeeze(-1)
             rhs_truth = _allen_cahn_rhs_tensor(
                 torch, grid, states, nus, samples["laplacian"]
@@ -988,6 +1022,17 @@ def _defect_audit(
                     dim=(1, 2),
                 ).detach().cpu().numpy()
             )
+            gain_deviation_ratios.append(
+                (
+                    torch.linalg.vector_norm(
+                        gains - gain.base_gain[None, :, :], dim=(1, 2)
+                    )
+                    / (gain.base_gain_norm + 1.0e-12)
+                )
+                .detach()
+                .cpu()
+                .numpy()
+            )
 
     ratio_values = np.concatenate(ratios)
     identity_values = np.concatenate(identity_ratios)
@@ -995,6 +1040,7 @@ def _defect_audit(
     error_values = np.concatenate(error_norms)
     innovation_values = np.concatenate(innovation_norms)
     saturation_values = np.concatenate(saturation)
+    gain_deviation_values = np.concatenate(gain_deviation_ratios)
     by_nu: dict[str, object] = {}
     for nu_index, nu in enumerate(sample_set.nu_values):
         mask = sample_set.nu_indices == nu_index
@@ -1035,6 +1081,15 @@ def _defect_audit(
         "error_norm": _ratio_summary(error_values),
         "innovation_norm": _ratio_summary(innovation_values),
         "gain_saturation_fraction_mean": float(np.mean(saturation_values)),
+        "gain_deviation_ratio": _ratio_summary(gain_deviation_values),
+        "gain_trust_boundary_fraction": float(
+            np.mean(
+                gain_deviation_values
+                >= 0.99 * float(getattr(gain, "gain_trust_ratio", 0.0))
+            )
+        )
+        if getattr(gain, "gain_trust_ratio", 0.0) > 0.0
+        else 0.0,
         "all_rms_gates_passed": bool(
             all(item["rms_gate_passed"] for item in by_nu.values())
         ),
@@ -1176,6 +1231,8 @@ def run(
     gain_learning_rate: float = 2.0e-3,
     certificate_learning_rate: float = 2.0e-3,
     gradient_clip_norm: float = 0.0,
+    gain_trust_ratio: float = 0.0,
+    gain_reg_weight: float = 0.0,
     selection_mode: str = "rollout-first",
     run_defect_audit: bool = False,
     checkpoint_dir: Path | None = None,
@@ -1224,6 +1281,7 @@ def run(
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
+                gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
                 refresh_interval=refresh_interval,
@@ -1236,6 +1294,7 @@ def run(
                 gain_learning_rate=gain_learning_rate,
                 certificate_learning_rate=certificate_learning_rate,
                 gradient_clip_norm=gradient_clip_norm,
+                gain_trust_ratio=gain_trust_ratio,
             )
             validation_loss = _validation_loss(
                 torch,
@@ -1249,6 +1308,7 @@ def run(
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
+                gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
                 device=device,
@@ -1321,6 +1381,7 @@ def run(
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
+                gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
                 device=device,
@@ -1366,6 +1427,8 @@ def run(
                     "gain_learning_rate": gain_learning_rate,
                     "certificate_learning_rate": certificate_learning_rate,
                     "gradient_clip_norm": gradient_clip_norm,
+                    "gain_trust_ratio": gain_trust_ratio,
+                    "gain_reg_weight": gain_reg_weight,
                 },
                 checkpoint_dir / f"grid-{grid_size}__seed-{best_seed}.pt",
             )
@@ -1398,6 +1461,7 @@ def run(
             "stable_weight": stable_weight,
             "defect_weight": defect_weight,
             "bi_weight": bi_weight,
+            "gain_reg_weight": gain_reg_weight,
             "lower_lipschitz": lower_lipschitz,
             "upper_lipschitz": upper_lipschitz,
             "certificate_kind": certificate_kind,
@@ -1409,6 +1473,7 @@ def run(
             "gain_learning_rate": gain_learning_rate,
             "certificate_learning_rate": certificate_learning_rate,
             "gradient_clip_norm": gradient_clip_norm,
+            "gain_trust_ratio": gain_trust_ratio,
             "refresh_interval": refresh_interval,
             "selection_limit": selection_limit,
             "selection_baseline_gain": selection_baseline_gain,
@@ -1450,6 +1515,7 @@ def run(
         "stable_weight": stable_weight,
         "defect_weight": defect_weight,
         "bi_weight": bi_weight,
+        "gain_reg_weight": gain_reg_weight,
         "lower_lipschitz": lower_lipschitz,
         "upper_lipschitz": upper_lipschitz,
         "certificate_kind": certificate_kind,
@@ -1461,6 +1527,7 @@ def run(
         "gain_learning_rate": gain_learning_rate,
         "certificate_learning_rate": certificate_learning_rate,
         "gradient_clip_norm": gradient_clip_norm,
+        "gain_trust_ratio": gain_trust_ratio,
         "selection_mode": selection_mode,
         "run_defect_audit": run_defect_audit,
         "refresh_interval": refresh_interval,
@@ -1514,6 +1581,8 @@ def main() -> None:
     parser.add_argument("--gain-learning-rate", type=float, default=2.0e-3)
     parser.add_argument("--certificate-learning-rate", type=float, default=2.0e-3)
     parser.add_argument("--gradient-clip-norm", type=float, default=0.0)
+    parser.add_argument("--gain-trust-ratio", type=float, default=0.0)
+    parser.add_argument("--gain-reg-weight", type=float, default=0.0)
     parser.add_argument("--selection-limit", type=int, default=48)
     parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
     parser.add_argument(
@@ -1545,6 +1614,8 @@ def main() -> None:
         raise SystemExit("learning rates must be positive")
     if args.gradient_clip_norm < 0.0:
         raise SystemExit("--gradient-clip-norm must be nonnegative")
+    if args.gain_trust_ratio < 0.0 or args.gain_reg_weight < 0.0:
+        raise SystemExit("gain trust ratio and regularization must be nonnegative")
     if args.certificate_kind in {"givens", "triangular"}:
         if args.mixing_layers < 1:
             raise SystemExit("mixed certificate requires --mixing-layers >= 1")
@@ -1592,6 +1663,8 @@ def main() -> None:
         gain_learning_rate=args.gain_learning_rate,
         certificate_learning_rate=args.certificate_learning_rate,
         gradient_clip_norm=args.gradient_clip_norm,
+        gain_trust_ratio=args.gain_trust_ratio,
+        gain_reg_weight=args.gain_reg_weight,
         refresh_interval=args.refresh_interval,
         selection_limit=args.selection_limit,
         selection_baseline_gain=args.selection_baseline_gain,

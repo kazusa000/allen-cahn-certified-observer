@@ -92,6 +92,8 @@ def main() -> None:
                 gain_learning_rate=5.0e-4,
                 certificate_learning_rate=2.0e-3,
                 gradient_clip_norm=1.0,
+                gain_trust_ratio=0.25,
+                gain_reg_weight=1.0,
                 selection_mode="defect-first",
                 run_defect_audit=True,
                 checkpoint_dir=args.checkpoint_dir / name,

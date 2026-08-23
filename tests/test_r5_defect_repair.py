@@ -131,3 +131,30 @@ def test_triangular_certificate_adds_bounded_observed_to_nullspace_shear() -> No
     singular_values = torch.linalg.svdvals(jacobian)
     assert torch.min(singular_values).item() >= 0.5 - 1.0e-5
     assert torch.max(singular_values).item() <= 2.0 + 1.0e-5
+
+
+def test_gain_trust_region_bounds_state_conditioned_deviation() -> None:
+    torch = pytest.importorskip("torch")
+    grid = AllenCahnGrid(15)
+    matrix = local_average_matrix(grid, INTERVALS)
+    gain, _certificate = _build_models(
+        torch,
+        grid,
+        matrix,
+        base_gain=0.02,
+        gain_scale=0.5,
+        certificate_scale=1.0,
+        lower_lipschitz=0.5,
+        upper_lipschitz=2.0,
+        gain_trust_ratio=0.25,
+    )
+    torch.nn.init.normal_(gain.network[-1].weight, std=0.2)
+    torch.nn.init.normal_(gain.network[-1].bias, std=0.2)
+    features = torch.randn((8, grid.n + 2 * matrix.shape[0] + 2))
+
+    learned = gain(features)
+    deviation = torch.linalg.vector_norm(
+        learned - gain.base_gain[None, :, :], dim=(1, 2)
+    )
+
+    assert torch.all(deviation < 0.25 * gain.base_gain_norm)

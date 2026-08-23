@@ -36,3 +36,5 @@
   pre-registered defect-reduction gate.
 - Added separate gain/certificate learning rates, staged certificate-first training, gradient clipping,
   and bounded online-rollout failure handling for the triangular structure screen.
+- Added a state-wise trust region and normalized deviation penalty around the initialized correction
+  operator to keep the joint observer rollout in its numerically stable neighborhood.
