@@ -504,13 +504,13 @@ def _build_models(
                             -1, self.null_dimension, q
                         )
                     )
-                    shear_norm = torch.linalg.vector_norm(
-                        shear_candidate, dim=(1, 2), keepdim=True
+                    shear_squared_norm = torch.sum(
+                        shear_candidate**2, dim=(1, 2), keepdim=True
                     )
                     shear = (
                         self.shear_norm_limit
                         * shear_candidate
-                        / torch.clamp(shear_norm, min=1.0)
+                        / torch.sqrt(torch.clamp(shear_squared_norm, min=1.0))
                     )
                     observed_coordinates = errors @ self.row_basis
                     transformed_coordinates = transformed_coordinates + torch.bmm(
@@ -796,12 +796,32 @@ def _train_one(
                 upper_lipschitz=upper_lipschitz,
             )
             loss = components["total"]
+            if not bool(torch.isfinite(loss).detach().cpu().item()):
+                raise RuntimeError(
+                    f"non-finite joint loss at epoch={epoch}, batch={start}"
+                )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            parameters_with_gradients = [
+                parameter
+                for parameter in list(gain.parameters())
+                + list(certificate.parameters())
+                if parameter.grad is not None
+            ]
+            if any(
+                not bool(
+                    torch.all(torch.isfinite(parameter.grad)).detach().cpu().item()
+                )
+                for parameter in parameters_with_gradients
+            ):
+                raise RuntimeError(
+                    f"non-finite joint gradient at epoch={epoch}, batch={start}"
+                )
             if gradient_clip_norm > 0.0:
                 torch.nn.utils.clip_grad_norm_(
-                    list(gain.parameters()) + list(certificate.parameters()),
+                    parameters_with_gradients,
                     gradient_clip_norm,
+                    error_if_nonfinite=True,
                 )
             optimizer.step()
         history.append(

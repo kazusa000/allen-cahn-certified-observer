@@ -133,6 +133,46 @@ def test_triangular_certificate_adds_bounded_observed_to_nullspace_shear() -> No
     assert torch.max(singular_values).item() <= 2.0 + 1.0e-5
 
 
+def test_triangular_certificate_has_finite_directional_loss_gradients_at_identity() -> None:
+    torch = pytest.importorskip("torch")
+    grid = AllenCahnGrid(15)
+    matrix = local_average_matrix(grid, INTERVALS)
+    _gain, certificate = _build_models(
+        torch,
+        grid,
+        matrix,
+        base_gain=0.02,
+        gain_scale=0.5,
+        certificate_scale=1.0,
+        lower_lipschitz=0.5,
+        upper_lipschitz=2.0,
+        certificate_kind="triangular",
+        mixing_layers=2,
+        shear_norm_limit=0.2,
+    )
+    generator = torch.Generator().manual_seed(44)
+    states = torch.randn((3, grid.n), generator=generator)
+    errors = torch.randn((3, grid.n), generator=generator)
+    state_directions = torch.randn((3, grid.n), generator=generator)
+    error_directions = torch.randn((3, grid.n), generator=generator)
+
+    _, directional = torch.autograd.functional.jvp(
+        certificate,
+        (states, errors),
+        (state_directions, error_directions),
+        create_graph=True,
+    )
+    torch.mean(directional**2).backward()
+
+    gradients = [
+        parameter.grad
+        for parameter in certificate.parameters()
+        if parameter.grad is not None
+    ]
+    assert gradients
+    assert all(torch.all(torch.isfinite(gradient)) for gradient in gradients)
+
+
 def test_gain_trust_region_bounds_state_conditioned_deviation() -> None:
     torch = pytest.importorskip("torch")
     grid = AllenCahnGrid(15)
