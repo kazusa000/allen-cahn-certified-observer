@@ -648,6 +648,9 @@ def _train_one(
     replay_snapshots: int = 0,
     gain_warmup_epochs: int = 0,
     certificate_warmup_epochs: int = 0,
+    gain_learning_rate: float = 2.0e-3,
+    certificate_learning_rate: float = 2.0e-3,
+    gradient_clip_norm: float = 0.0,
 ) -> tuple[object, object, dict[str, float | int]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
@@ -680,7 +683,13 @@ def _train_one(
         device=device,
     )
     optimizer = torch.optim.Adam(
-        list(gain.parameters()) + list(certificate.parameters()), lr=2.0e-3
+        (
+            {"params": list(gain.parameters()), "lr": gain_learning_rate},
+            {
+                "params": list(certificate.parameters()),
+                "lr": certificate_learning_rate,
+            },
+        )
     )
     matrix_tensor = torch.as_tensor(matrix, dtype=torch.float32, device=device)
     history: list[dict[str, float]] = []
@@ -735,6 +744,11 @@ def _train_one(
             loss = components["total"]
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            if gradient_clip_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(
+                    list(gain.parameters()) + list(certificate.parameters()),
+                    gradient_clip_norm,
+                )
             optimizer.step()
         history.append(
             {
@@ -789,6 +803,9 @@ def _train_one(
             "on_policy_refresh_count": refresh_count,
             "training_sample_count": int(sample_count),
             "replay_snapshot_count": len(policy_replay),
+            "gain_learning_rate": gain_learning_rate,
+            "certificate_learning_rate": certificate_learning_rate,
+            "gradient_clip_norm": gradient_clip_norm,
         },
     )
 
@@ -1156,6 +1173,9 @@ def run(
     replay_snapshots: int = 0,
     gain_warmup_epochs: int = 0,
     certificate_warmup_epochs: int = 0,
+    gain_learning_rate: float = 2.0e-3,
+    certificate_learning_rate: float = 2.0e-3,
+    gradient_clip_norm: float = 0.0,
     selection_mode: str = "rollout-first",
     run_defect_audit: bool = False,
     checkpoint_dir: Path | None = None,
@@ -1213,6 +1233,9 @@ def run(
                 replay_snapshots=replay_snapshots,
                 gain_warmup_epochs=gain_warmup_epochs,
                 certificate_warmup_epochs=certificate_warmup_epochs,
+                gain_learning_rate=gain_learning_rate,
+                certificate_learning_rate=certificate_learning_rate,
+                gradient_clip_norm=gradient_clip_norm,
             )
             validation_loss = _validation_loss(
                 torch,
@@ -1340,6 +1363,9 @@ def run(
                     "gain_scale": gain_scale,
                     "certificate_scale": certificate_scale,
                     "lambda_ratio": lambda_ratio,
+                    "gain_learning_rate": gain_learning_rate,
+                    "certificate_learning_rate": certificate_learning_rate,
+                    "gradient_clip_norm": gradient_clip_norm,
                 },
                 checkpoint_dir / f"grid-{grid_size}__seed-{best_seed}.pt",
             )
@@ -1380,6 +1406,9 @@ def run(
             "replay_snapshots": replay_snapshots,
             "gain_warmup_epochs": gain_warmup_epochs,
             "certificate_warmup_epochs": certificate_warmup_epochs,
+            "gain_learning_rate": gain_learning_rate,
+            "certificate_learning_rate": certificate_learning_rate,
+            "gradient_clip_norm": gradient_clip_norm,
             "refresh_interval": refresh_interval,
             "selection_limit": selection_limit,
             "selection_baseline_gain": selection_baseline_gain,
@@ -1429,6 +1458,9 @@ def run(
         "replay_snapshots": replay_snapshots,
         "gain_warmup_epochs": gain_warmup_epochs,
         "certificate_warmup_epochs": certificate_warmup_epochs,
+        "gain_learning_rate": gain_learning_rate,
+        "certificate_learning_rate": certificate_learning_rate,
+        "gradient_clip_norm": gradient_clip_norm,
         "selection_mode": selection_mode,
         "run_defect_audit": run_defect_audit,
         "refresh_interval": refresh_interval,
@@ -1479,6 +1511,9 @@ def main() -> None:
     parser.add_argument("--replay-snapshots", type=int, default=0)
     parser.add_argument("--gain-warmup-epochs", type=int, default=0)
     parser.add_argument("--certificate-warmup-epochs", type=int, default=0)
+    parser.add_argument("--gain-learning-rate", type=float, default=2.0e-3)
+    parser.add_argument("--certificate-learning-rate", type=float, default=2.0e-3)
+    parser.add_argument("--gradient-clip-norm", type=float, default=0.0)
     parser.add_argument("--selection-limit", type=int, default=48)
     parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
     parser.add_argument(
@@ -1506,6 +1541,10 @@ def main() -> None:
         raise SystemExit("warmup epochs must be nonnegative")
     if args.gain_warmup_epochs + args.certificate_warmup_epochs > args.epochs:
         raise SystemExit("warmup epochs must not exceed total epochs")
+    if args.gain_learning_rate <= 0.0 or args.certificate_learning_rate <= 0.0:
+        raise SystemExit("learning rates must be positive")
+    if args.gradient_clip_norm < 0.0:
+        raise SystemExit("--gradient-clip-norm must be nonnegative")
     if args.certificate_kind in {"givens", "triangular"}:
         if args.mixing_layers < 1:
             raise SystemExit("mixed certificate requires --mixing-layers >= 1")
@@ -1550,6 +1589,9 @@ def main() -> None:
         replay_snapshots=args.replay_snapshots,
         gain_warmup_epochs=args.gain_warmup_epochs,
         certificate_warmup_epochs=args.certificate_warmup_epochs,
+        gain_learning_rate=args.gain_learning_rate,
+        certificate_learning_rate=args.certificate_learning_rate,
+        gradient_clip_norm=args.gradient_clip_norm,
         refresh_interval=args.refresh_interval,
         selection_limit=args.selection_limit,
         selection_baseline_gain=args.selection_baseline_gain,

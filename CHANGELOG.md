@@ -34,3 +34,5 @@
 - Added the second-stage T--K structure screen with a bounded triangular observed-to-nullspace shear,
   configurable stable-loss weight, and gain-range ablations after the first repair screen failed its
   pre-registered defect-reduction gate.
+- Added separate gain/certificate learning rates, staged certificate-first training, gradient clipping,
+  and bounded online-rollout failure handling for the triangular structure screen.
