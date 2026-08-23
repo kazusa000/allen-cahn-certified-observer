@@ -91,3 +91,43 @@ def test_givens_certificate_is_identity_at_initialization_and_stays_bounded() ->
     singular_values = torch.linalg.svdvals(jacobian)
     assert torch.min(singular_values).item() >= 0.5 - 1.0e-5
     assert torch.max(singular_values).item() <= 2.0 + 1.0e-5
+
+
+def test_triangular_certificate_adds_bounded_observed_to_nullspace_shear() -> None:
+    torch = pytest.importorskip("torch")
+    grid = AllenCahnGrid(15)
+    matrix = local_average_matrix(grid, INTERVALS)
+    _gain, certificate = _build_models(
+        torch,
+        grid,
+        matrix,
+        base_gain=0.02,
+        gain_scale=0.5,
+        certificate_scale=1.0,
+        lower_lipschitz=0.5,
+        upper_lipschitz=2.0,
+        certificate_kind="triangular",
+        mixing_layers=2,
+        shear_norm_limit=0.2,
+    )
+    generator = torch.Generator().manual_seed(43)
+    states = torch.randn((3, grid.n), generator=generator)
+    errors = torch.randn((3, grid.n), generator=generator)
+    assert torch.allclose(certificate(states, errors), errors, atol=1.0e-6)
+
+    torch.nn.init.normal_(certificate.network[-1].weight, std=0.1)
+    torch.nn.init.normal_(certificate.network[-1].bias, std=0.1)
+    transformed = certificate(states, errors)
+    direction = (transformed - errors) @ torch.as_tensor(
+        matrix.T, dtype=torch.float32
+    )
+    assert torch.max(torch.abs(direction)).item() < 1.0e-5
+    assert torch.linalg.vector_norm(transformed - errors).item() > 1.0e-5
+
+    error = errors[0].detach().requires_grad_(True)
+    jacobian = torch.autograd.functional.jacobian(
+        lambda value: certificate(states[0:1], value[None, :])[0], error
+    )
+    singular_values = torch.linalg.svdvals(jacobian)
+    assert torch.min(singular_values).item() >= 0.5 - 1.0e-5
+    assert torch.max(singular_values).item() <= 2.0 + 1.0e-5

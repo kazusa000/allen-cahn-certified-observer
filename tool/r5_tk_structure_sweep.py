@@ -1,4 +1,4 @@
-"""Pre-registered R5 screen for dynamics-defect generalization repairs."""
+"""Stage-two R5 screen for the T--K triangular-transform structure."""
 
 from __future__ import annotations
 
@@ -13,36 +13,28 @@ HISTORICAL_N31_VALIDATION_DEFECT = 0.538230836391449
 
 CONFIGURATIONS = (
     {
-        "name": "diagonal-current-policy",
-        "certificate_kind": "diagonal",
-        "mixing_layers": 0,
+        "name": "triangular-current-policy",
         "replay_snapshots": 0,
-        "gain_warmup_epochs": 0,
-        "certificate_warmup_epochs": 0,
+        "stable_weight": 1.0,
+        "gain_scale": 0.5,
     },
     {
-        "name": "diagonal-mixed-replay",
-        "certificate_kind": "diagonal",
-        "mixing_layers": 0,
+        "name": "triangular-mixed-replay",
         "replay_snapshots": 2,
-        "gain_warmup_epochs": 0,
-        "certificate_warmup_epochs": 0,
+        "stable_weight": 1.0,
+        "gain_scale": 0.5,
     },
     {
-        "name": "givens-mixed-replay",
-        "certificate_kind": "givens",
-        "mixing_layers": 2,
+        "name": "triangular-defect-focus",
         "replay_snapshots": 2,
-        "gain_warmup_epochs": 0,
-        "certificate_warmup_epochs": 0,
+        "stable_weight": 0.1,
+        "gain_scale": 0.5,
     },
     {
-        "name": "givens-mixed-curriculum",
-        "certificate_kind": "givens",
-        "mixing_layers": 2,
+        "name": "triangular-defect-focus-wide-gain",
         "replay_snapshots": 2,
-        "gain_warmup_epochs": 20,
-        "certificate_warmup_epochs": 20,
+        "stable_weight": 0.1,
+        "gain_scale": 1.0,
     },
 )
 
@@ -59,8 +51,6 @@ def main() -> None:
 
     import torch
 
-    if args.epochs < 41:
-        raise SystemExit("--epochs must exceed the 40-epoch curriculum")
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise SystemExit("CUDA requested but torch.cuda.is_available() is false")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +59,7 @@ def main() -> None:
     runs: list[dict[str, object]] = []
     for configuration in CONFIGURATIONS:
         name = str(configuration["name"])
-        print(f"[repair-screen] configuration={name}", flush=True)
+        print(f"[tk-structure-screen] configuration={name}", flush=True)
         result = run(
             torch,
             [31],
@@ -81,10 +71,10 @@ def main() -> None:
             device=args.device,
             lambda_ratio=0.1,
             base_gain=0.02,
-            gain_scale=0.5,
+            gain_scale=float(configuration["gain_scale"]),
             certificate_scale=1.0,
             stable_normalization="error-time",
-            stable_weight=1.0,
+            stable_weight=float(configuration["stable_weight"]),
             defect_weight=1.0,
             bi_weight=1.0,
             lower_lipschitz=0.5,
@@ -92,18 +82,20 @@ def main() -> None:
             refresh_interval=20,
             selection_limit=12,
             selection_baseline_gain=0.10,
-            certificate_kind=str(configuration["certificate_kind"]),
-            mixing_layers=int(configuration["mixing_layers"]),
+            certificate_kind="triangular",
+            mixing_layers=2,
+            shear_norm_limit=0.2,
             replay_snapshots=int(configuration["replay_snapshots"]),
-            gain_warmup_epochs=int(configuration["gain_warmup_epochs"]),
-            certificate_warmup_epochs=int(
-                configuration["certificate_warmup_epochs"]
-            ),
             selection_mode="defect-first",
             run_defect_audit=True,
             checkpoint_dir=args.checkpoint_dir / name,
         )
         grid = result["results"][0]
+        selected_seed_result = next(
+            item
+            for item in grid["seed_results"]
+            if item["seed"] == grid["selected_seed"]
+        )
         audits = grid["defect_audits"]
         fixed_rms = audits["fixed_gain_validation"]["overall"]["rms"]
         current_rms = audits["current_observer_validation"]["overall"]["rms"]
@@ -113,15 +105,9 @@ def main() -> None:
                 "fixed_gain_validation_defect_rms": fixed_rms,
                 "current_observer_validation_defect_rms": current_rms,
                 "worst_validation_defect_rms": max(fixed_rms, current_rms),
-                "validation_median_terminal_error_mass": grid[
-                    "seed_results"
-                ][
-                    next(
-                        index
-                        for index, item in enumerate(grid["seed_results"])
-                        if item["seed"] == grid["selected_seed"]
-                    )
-                ]["validation_median_terminal_error_mass"],
+                "validation_median_terminal_error_mass": selected_seed_result[
+                    "validation_median_terminal_error_mass"
+                ],
                 "selection_baseline_median_terminal_error_mass": grid[
                     "selection_baseline_median_terminal_error_mass"
                 ],
@@ -151,7 +137,7 @@ def main() -> None:
     )
     historical_rms = float(np.sqrt(HISTORICAL_N31_VALIDATION_DEFECT))
     output = {
-        "kind": "r5-dynamics-defect-repair-screen",
+        "kind": "r5-tk-triangular-structure-screen",
         "pre_registered_configurations": CONFIGURATIONS,
         "seeds": args.seeds,
         "epochs": args.epochs,

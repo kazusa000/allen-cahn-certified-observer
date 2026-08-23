@@ -31,3 +31,6 @@
 - Added the pre-registered R5 dynamics-defect repair screen with mixed trajectory replay, structurally
   invertible Givens nullspace mixing, staged-to-joint training, checkpoint persistence, and split-wise
   defect-distribution audits.
+- Added the second-stage T--K structure screen with a bounded triangular observed-to-nullspace shear,
+  configurable stable-loss weight, and gain-range ablations after the first repair screen failed its
+  pre-registered defect-reduction gate.

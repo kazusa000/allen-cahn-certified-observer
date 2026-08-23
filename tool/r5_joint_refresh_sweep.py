@@ -76,6 +76,7 @@ def main() -> None:
                 gain_scale=args.gain_scale,
                 certificate_scale=args.certificate_scale,
                 stable_normalization="error-time",
+                stable_weight=1.0,
                 defect_weight=defect_weight,
                 bi_weight=args.bi_weight,
                 lower_lipschitz=args.lower_lipschitz,

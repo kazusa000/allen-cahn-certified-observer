@@ -311,12 +311,14 @@ def _build_models(
     upper_lipschitz: float,
     certificate_kind: str = "diagonal",
     mixing_layers: int = 0,
+    shear_norm_limit: float = 0.0,
 ) -> tuple[object, object]:
     nn = torch.nn
     n = grid.n
     q = matrix.shape[0]
     feature_dim = n + 2 * q + 2
     basis = NullspaceCertificate(matrix).null_basis
+    row_basis = np.linalg.qr(matrix.T, mode="reduced")[0]
 
     class GainNet(nn.Module):
         def __init__(self) -> None:
@@ -343,14 +345,23 @@ def _build_models(
         def __init__(self) -> None:
             super().__init__()
             null_dimension = basis.shape[1]
-            if certificate_kind not in {"diagonal", "givens"}:
+            if certificate_kind not in {"diagonal", "givens", "triangular"}:
                 raise ValueError(f"unknown certificate kind: {certificate_kind}")
-            if certificate_kind == "givens" and mixing_layers < 1:
-                raise ValueError("givens certificate requires at least one mixing layer")
+            if certificate_kind in {"givens", "triangular"} and mixing_layers < 1:
+                raise ValueError("mixed certificate requires at least one mixing layer")
+            if certificate_kind == "triangular" and not 0.0 < shear_norm_limit < 1.0:
+                raise ValueError("triangular certificate requires 0 < shear limit < 1")
+            if certificate_kind == "triangular":
+                internal_lower = lower_lipschitz * (1.0 + shear_norm_limit)
+                internal_upper = upper_lipschitz / (1.0 + shear_norm_limit)
+                if not internal_lower < 1.0 < internal_upper:
+                    raise ValueError("triangular internal scale bounds must contain 1")
             pair_count = null_dimension // 2
             output_dimension = null_dimension
-            if certificate_kind == "givens":
+            if certificate_kind in {"givens", "triangular"}:
                 output_dimension += mixing_layers * pair_count
+            if certificate_kind == "triangular":
+                output_dimension += null_dimension * q
             self.network = nn.Sequential(
                 nn.Linear(n, 128),
                 nn.Tanh(),
@@ -364,8 +375,12 @@ def _build_models(
             self.null_dimension = null_dimension
             self.pair_count = pair_count
             self.mixing_layers = mixing_layers
+            self.shear_norm_limit = shear_norm_limit
             self.register_buffer(
                 "null_basis", torch.as_tensor(basis, dtype=torch.float32)
+            )
+            self.register_buffer(
+                "row_basis", torch.as_tensor(row_basis, dtype=torch.float32)
             )
 
         def _rotate(
@@ -401,23 +416,48 @@ def _build_models(
                 ) * torch.sigmoid(certificate_scale * raw)
                 transformed_coordinates = scales * coordinates
             else:
-                scale_fraction = (1.0 - lower_lipschitz) / (
-                    upper_lipschitz - lower_lipschitz
+                scale_lower = lower_lipschitz
+                scale_upper = upper_lipschitz
+                if self.certificate_kind == "triangular":
+                    scale_lower *= 1.0 + self.shear_norm_limit
+                    scale_upper /= 1.0 + self.shear_norm_limit
+                scale_fraction = (1.0 - scale_lower) / (
+                    scale_upper - scale_lower
                 )
                 identity_logit = float(np.log(scale_fraction / (1.0 - scale_fraction)))
-                scales = lower_lipschitz + (
-                    upper_lipschitz - lower_lipschitz
-                ) * torch.sigmoid(
+                scales = scale_lower + (scale_upper - scale_lower) * torch.sigmoid(
                     identity_logit
                     + certificate_scale * raw[:, : self.null_dimension]
                 )
+                angle_end = (
+                    self.null_dimension + self.mixing_layers * self.pair_count
+                )
                 angles = (np.pi / 4.0) * torch.tanh(
                     certificate_scale
-                    * raw[:, self.null_dimension :].reshape(
+                    * raw[:, self.null_dimension : angle_end].reshape(
                         -1, self.mixing_layers, self.pair_count
                     )
                 )
                 transformed_coordinates = coordinates
+                if self.certificate_kind == "triangular":
+                    shear_candidate = torch.tanh(
+                        certificate_scale
+                        * raw[:, angle_end:].reshape(
+                            -1, self.null_dimension, q
+                        )
+                    )
+                    shear_norm = torch.linalg.vector_norm(
+                        shear_candidate, dim=(1, 2), keepdim=True
+                    )
+                    shear = (
+                        self.shear_norm_limit
+                        * shear_candidate
+                        / torch.clamp(shear_norm, min=1.0)
+                    )
+                    observed_coordinates = errors @ self.row_basis
+                    transformed_coordinates = transformed_coordinates + torch.bmm(
+                        shear, observed_coordinates[:, :, None]
+                    ).squeeze(-1)
                 for layer in reversed(range(self.mixing_layers)):
                     transformed_coordinates = self._rotate(
                         transformed_coordinates,
@@ -450,6 +490,7 @@ def _joint_loss_components(
     indices: object,
     *,
     stable_normalization: str,
+    stable_weight: float,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
@@ -516,7 +557,9 @@ def _joint_loss_components(
     upper_violation = torch.relu(transformed_norm - upper_lipschitz * error_norm)
     bi_loss = torch.mean(lower_violation**2 + upper_violation**2)
     total_loss = (
-        stable_loss + defect_weight * defect_loss + bi_weight * bi_loss
+        stable_weight * stable_loss
+        + defect_weight * defect_loss
+        + bi_weight * bi_loss
     )
     return {
         "stable": stable_loss,
@@ -576,6 +619,7 @@ def _train_one(
     certificate_scale: float,
     lambda_ratio: float,
     stable_normalization: str,
+    stable_weight: float,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
@@ -583,6 +627,7 @@ def _train_one(
     refresh_interval: int,
     certificate_kind: str = "diagonal",
     mixing_layers: int = 0,
+    shear_norm_limit: float = 0.0,
     replay_snapshots: int = 0,
     gain_warmup_epochs: int = 0,
     certificate_warmup_epochs: int = 0,
@@ -601,6 +646,7 @@ def _train_one(
         upper_lipschitz=upper_lipschitz,
         certificate_kind=certificate_kind,
         mixing_layers=mixing_layers,
+        shear_norm_limit=shear_norm_limit,
     )
     gain.to(device)
     certificate.to(device)
@@ -663,6 +709,7 @@ def _train_one(
                 matrix_tensor,
                 indices,
                 stable_normalization=stable_normalization,
+                stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -693,6 +740,7 @@ def _train_one(
             matrix_tensor,
             indices,
             stable_normalization=stable_normalization,
+            stable_weight=stable_weight,
             defect_weight=defect_weight,
             bi_weight=bi_weight,
             lower_lipschitz=lower_lipschitz,
@@ -738,6 +786,7 @@ def _validation_loss(
     *,
     lambda_ratio: float,
     stable_normalization: str,
+    stable_weight: float,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
@@ -769,6 +818,7 @@ def _validation_loss(
             torch.as_tensor(matrix, dtype=torch.float32, device=device),
             indices,
             stable_normalization=stable_normalization,
+            stable_weight=stable_weight,
             defect_weight=defect_weight,
             bi_weight=bi_weight,
             lower_lipschitz=lower_lipschitz,
@@ -1073,6 +1123,7 @@ def run(
     gain_scale: float,
     certificate_scale: float,
     stable_normalization: str,
+    stable_weight: float,
     defect_weight: float,
     bi_weight: float,
     lower_lipschitz: float,
@@ -1082,6 +1133,7 @@ def run(
     selection_baseline_gain: float,
     certificate_kind: str = "diagonal",
     mixing_layers: int = 0,
+    shear_norm_limit: float = 0.0,
     replay_snapshots: int = 0,
     gain_warmup_epochs: int = 0,
     certificate_warmup_epochs: int = 0,
@@ -1130,6 +1182,7 @@ def run(
                 certificate_scale=certificate_scale,
                 lambda_ratio=lambda_ratio,
                 stable_normalization=stable_normalization,
+                stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -1137,6 +1190,7 @@ def run(
                 refresh_interval=refresh_interval,
                 certificate_kind=certificate_kind,
                 mixing_layers=mixing_layers,
+                shear_norm_limit=shear_norm_limit,
                 replay_snapshots=replay_snapshots,
                 gain_warmup_epochs=gain_warmup_epochs,
                 certificate_warmup_epochs=certificate_warmup_epochs,
@@ -1150,6 +1204,7 @@ def run(
                 matrix,
                 lambda_ratio=lambda_ratio,
                 stable_normalization=stable_normalization,
+                stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -1221,6 +1276,7 @@ def run(
                 matrix,
                 lambda_ratio=lambda_ratio,
                 stable_normalization=stable_normalization,
+                stable_weight=stable_weight,
                 defect_weight=defect_weight,
                 bi_weight=bi_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -1258,6 +1314,7 @@ def run(
                     "certificate_state_dict": certificate.state_dict(),
                     "certificate_kind": certificate_kind,
                     "mixing_layers": mixing_layers,
+                    "shear_norm_limit": shear_norm_limit,
                     "lower_lipschitz": lower_lipschitz,
                     "upper_lipschitz": upper_lipschitz,
                     "base_gain": base_gain,
@@ -1293,12 +1350,14 @@ def run(
             "gain_scale": gain_scale,
             "certificate_scale": certificate_scale,
             "stable_normalization": stable_normalization,
+            "stable_weight": stable_weight,
             "defect_weight": defect_weight,
             "bi_weight": bi_weight,
             "lower_lipschitz": lower_lipschitz,
             "upper_lipschitz": upper_lipschitz,
             "certificate_kind": certificate_kind,
             "mixing_layers": mixing_layers,
+            "shear_norm_limit": shear_norm_limit,
             "replay_snapshots": replay_snapshots,
             "gain_warmup_epochs": gain_warmup_epochs,
             "certificate_warmup_epochs": certificate_warmup_epochs,
@@ -1340,12 +1399,14 @@ def run(
         "gain_scale": gain_scale,
         "certificate_scale": certificate_scale,
         "stable_normalization": stable_normalization,
+        "stable_weight": stable_weight,
         "defect_weight": defect_weight,
         "bi_weight": bi_weight,
         "lower_lipschitz": lower_lipschitz,
         "upper_lipschitz": upper_lipschitz,
         "certificate_kind": certificate_kind,
         "mixing_layers": mixing_layers,
+        "shear_norm_limit": shear_norm_limit,
         "replay_snapshots": replay_snapshots,
         "gain_warmup_epochs": gain_warmup_epochs,
         "certificate_warmup_epochs": certificate_warmup_epochs,
@@ -1379,14 +1440,18 @@ def main() -> None:
     parser.add_argument("--gain-scale", type=float, default=0.5)
     parser.add_argument("--certificate-scale", type=float, default=1.0)
     parser.add_argument(
-        "--certificate-kind", choices=("diagonal", "givens"), default="diagonal"
+        "--certificate-kind",
+        choices=("diagonal", "givens", "triangular"),
+        default="diagonal",
     )
     parser.add_argument("--mixing-layers", type=int, default=0)
+    parser.add_argument("--shear-norm-limit", type=float, default=0.0)
     parser.add_argument(
         "--stable-normalization",
         choices=("none", "error-time"),
         default="error-time",
     )
+    parser.add_argument("--stable-weight", type=float, default=1.0)
     parser.add_argument("--defect-weight", type=float, default=1.0)
     parser.add_argument("--bi-weight", type=float, default=1.0)
     parser.add_argument("--lower-lipschitz", type=float, default=0.5)
@@ -1410,7 +1475,7 @@ def main() -> None:
 
     if args.lambda_ratio <= 0.0:
         raise SystemExit("--lambda-ratio must be positive")
-    if args.defect_weight < 0.0 or args.bi_weight < 0.0:
+    if args.stable_weight < 0.0 or args.defect_weight < 0.0 or args.bi_weight < 0.0:
         raise SystemExit("loss weights must be nonnegative")
     if args.lower_lipschitz <= 0.0 or args.upper_lipschitz < args.lower_lipschitz:
         raise SystemExit("lipschitz bounds must satisfy 0 < lower <= upper")
@@ -1422,11 +1487,18 @@ def main() -> None:
         raise SystemExit("warmup epochs must be nonnegative")
     if args.gain_warmup_epochs + args.certificate_warmup_epochs > args.epochs:
         raise SystemExit("warmup epochs must not exceed total epochs")
-    if args.certificate_kind == "givens":
+    if args.certificate_kind in {"givens", "triangular"}:
         if args.mixing_layers < 1:
-            raise SystemExit("givens certificate requires --mixing-layers >= 1")
+            raise SystemExit("mixed certificate requires --mixing-layers >= 1")
         if not args.lower_lipschitz < 1.0 < args.upper_lipschitz:
-            raise SystemExit("givens certificate bounds must strictly contain 1")
+            raise SystemExit("mixed certificate bounds must strictly contain 1")
+    if args.certificate_kind == "triangular":
+        if not 0.0 < args.shear_norm_limit < 1.0:
+            raise SystemExit("triangular certificate requires 0 < shear limit < 1")
+        scale_lower = args.lower_lipschitz * (1.0 + args.shear_norm_limit)
+        scale_upper = args.upper_lipschitz / (1.0 + args.shear_norm_limit)
+        if not scale_lower < 1.0 < scale_upper:
+            raise SystemExit("triangular internal scale bounds must contain 1")
     if args.selection_limit < 1:
         raise SystemExit("--selection-limit must be positive")
     if args.selection_baseline_gain < 0.0:
@@ -1448,12 +1520,14 @@ def main() -> None:
         gain_scale=args.gain_scale,
         certificate_scale=args.certificate_scale,
         stable_normalization=args.stable_normalization,
+        stable_weight=args.stable_weight,
         defect_weight=args.defect_weight,
         bi_weight=args.bi_weight,
         lower_lipschitz=args.lower_lipschitz,
         upper_lipschitz=args.upper_lipschitz,
         certificate_kind=args.certificate_kind,
         mixing_layers=args.mixing_layers,
+        shear_norm_limit=args.shear_norm_limit,
         replay_snapshots=args.replay_snapshots,
         gain_warmup_epochs=args.gain_warmup_epochs,
         certificate_warmup_epochs=args.certificate_warmup_epochs,
