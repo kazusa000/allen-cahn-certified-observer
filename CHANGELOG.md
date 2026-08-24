@@ -117,6 +117,9 @@
   insufficient.
 - Allowed repair checkpoints to seed a monotone follow-up capacity stage after
   the conditional model saturated its rho budget while leaving gain headroom.
+- Added explicit mining of the consumed calibration split's current worst
+  points for the final targeted fit; mined points are recorded as training-only
+  and excluded from subsequent validation claims.
 - Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
   locked-test policy unchanged.
 

@@ -351,6 +351,63 @@ def _hard_point_neighborhood(
     }
 
 
+def _mine_calibration_hard_samples(
+    torch: object,
+    transform: object,
+    gain: object,
+    contexts: dict[int, dict[str, object]],
+    *,
+    keep_count: int,
+    device: str,
+) -> tuple[dict[int, dict[str, np.ndarray]], dict[str, object]]:
+    """Mine the current worst points from the already-consumed split."""
+
+    mined: dict[int, dict[str, np.ndarray]] = {}
+    diagnostics: dict[str, object] = {}
+    for n in GRID_SIZES:
+        grid = AllenCahnGrid(n)
+        observation = local_average_matrix(grid, THREE_SENSOR_INTERVALS)
+        samples = _collocation_samples(
+            grid, observation, seed=1851, count=4096
+        )
+        states = torch.as_tensor(
+            samples["states"], dtype=torch.float32, device=device
+        )
+        errors = torch.as_tensor(
+            samples["errors"], dtype=torch.float32, device=device
+        )
+        rates = []
+        for start in range(0, states.shape[0], 512):
+            components = _fiber_components(
+                torch,
+                transform,
+                gain,
+                states[start : start + 512],
+                errors[start : start + 512],
+                contexts[n],
+                create_graph=False,
+            )
+            rates.append(components["rates"].detach())
+        all_rates = torch.cat(rates)
+        indices_tensor = torch.topk(all_rates, keep_count, largest=False).indices
+        indices = indices_tensor.cpu().numpy()
+        mined[n] = {
+            name: value[indices].copy() for name, value in samples.items()
+        }
+        margins = all_rates - ALPHA
+        diagnostics[str(n)] = {
+            "source_seed": 1851,
+            "source_count": 4096,
+            "selected_count": keep_count,
+            "selected_indices": indices.tolist(),
+            "margin_min_before_training": float(torch.min(margins).cpu()),
+            "selected_margin_max_before_training": float(
+                torch.max(margins[indices_tensor]).cpu()
+            ),
+        }
+    return mined, diagnostics
+
+
 def _transform_teacher_loss(
     torch: object,
     transform: object,
@@ -575,15 +632,20 @@ def _train_seed(
         }
         for n, values in replay_numpy.items()
     }
-    hard_numpy = _hard_point_neighborhood(
+    hard_numpy, hard_mining_diagnostics = _mine_calibration_hard_samples(
         torch,
-        count=hard_replay_count,
-        seed=4101 + seed,
+        transform,
+        gain,
+        contexts,
+        keep_count=hard_replay_count,
         device=device,
     )
     hard_tensors = {
-        name: torch.as_tensor(value, dtype=torch.float32, device=device)
-        for name, value in hard_numpy.items()
+        n: {
+            name: torch.as_tensor(value, dtype=torch.float32, device=device)
+            for name, value in values.items()
+        }
+        for n, values in hard_numpy.items()
     }
     history: list[dict[str, float]] = []
     adversary_history: list[dict[str, object]] = []
@@ -662,9 +724,7 @@ def _train_seed(
         ) * epoch / max(epochs - 1, 1)
         for step in range(steps_per_epoch):
             n = GRID_SIZES[(global_step + step) % len(GRID_SIZES)]
-            reserved_count = adversary_keep + (
-                hard_replay_count if n == 63 else 0
-            )
+            reserved_count = adversary_keep + hard_replay_count
             random_count = batch_size - reserved_count
             dynamic_count = random_count // 2
             replay_batch_count = random_count - dynamic_count
@@ -702,9 +762,8 @@ def _train_seed(
             errors = torch.cat(
                 (errors, active_adversarial_tensors[n]["errors"]), dim=0
             )
-            if n == 63:
-                states = torch.cat((states, hard_tensors["states"]), dim=0)
-                errors = torch.cat((errors, hard_tensors["errors"]), dim=0)
+            states = torch.cat((states, hard_tensors[n]["states"]), dim=0)
+            errors = torch.cat((errors, hard_tensors[n]["errors"]), dim=0)
             trajectory_indices = torch.randperm(
                 train_truth["states"].shape[0], device=device
             )[:rollout_batch_size]
@@ -824,6 +883,7 @@ def _train_seed(
         "initialization": initialization,
         "final_training": history[-1],
         "adversary_history": adversary_history,
+        "calibration_hard_mining": hard_mining_diagnostics,
         "gain_relative_delta_norm": gain.relative_delta_norm(),
         "structure": structure,
         "validation": validation,
@@ -1065,7 +1125,9 @@ def run(
             "rollout_batch_size": rollout_batch_size,
             "resample_count_per_epoch_per_grid": resample_count,
             "fixed_replay_count_per_grid": replay_count,
-            "hard_replay_count_grid_63": hard_replay_count,
+            "calibration_hard_replay_count_per_grid": hard_replay_count,
+            "calibration_hard_replay_source_seed": 1851,
+            "calibration_hard_replay_source_count": 4096,
             "resample_seed_base": RESAMPLE_SEED_BASE,
             "contraction_buffer": contraction_buffer,
             "adversary_grids": list(GRID_SIZES),
