@@ -105,6 +105,9 @@
   low-mode failures through excessive state conditioning, froze the inherited
   condition branch and added cosine learning-rate decay for the final
   pre-validation calibration.
+- Added monotone checkpoint-capacity expansion so the common-LMI diagnosis can
+  be followed by one controlled rho/gain-domain repair without changing the
+  inherited checkpoint function.
 - Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
   locked-test policy unchanged.
 

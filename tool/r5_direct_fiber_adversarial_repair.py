@@ -328,10 +328,8 @@ def _load_initialized_model(
         "seed": seed,
         "nu": NU_VALUE,
         "grid_sizes": GRID_SIZES,
-        "rho": rho,
         "hidden_width": hidden_width,
         "hidden_layers": hidden_layers,
-        "gain_trust_ratio": gain_trust_ratio,
         "error_scale": error_scale,
     }
     for name, value in expected.items():
@@ -342,6 +340,12 @@ def _load_initialized_model(
             raise RuntimeError(
                 f"checkpoint {checkpoint} has {name}={actual!r}, expected {value!r}"
             )
+    checkpoint_rho = float(payload["rho"])
+    checkpoint_gain_trust = float(payload["gain_trust_ratio"])
+    if checkpoint_rho > rho + 1.0e-12:
+        raise RuntimeError("repair cannot shrink the checkpoint rho budget")
+    if checkpoint_gain_trust > gain_trust_ratio + 1.0e-12:
+        raise RuntimeError("repair cannot shrink the checkpoint gain trust region")
     if not np.allclose(payload["base_gain"], base_gain, atol=1.0e-10, rtol=1.0e-10):
         raise RuntimeError("checkpoint base gain does not match corrected LMI design")
     if not np.allclose(
@@ -369,6 +373,10 @@ def _load_initialized_model(
         "path": str(checkpoint),
         "kind": payload.get("kind"),
         "seed": int(payload["seed"]),
+        "checkpoint_rho": checkpoint_rho,
+        "checkpoint_gain_trust_ratio": checkpoint_gain_trust,
+        "repair_rho": rho,
+        "repair_gain_trust_ratio": gain_trust_ratio,
     }
 
 
