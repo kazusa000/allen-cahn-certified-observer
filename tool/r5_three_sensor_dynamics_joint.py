@@ -299,7 +299,10 @@ def _certificate_structure_audit(
         nu_index = samples["nu_indices"][index : index + 1]
         nu = samples["nus"][index : index + 1]
         zero = certificate(state, torch.zeros_like(error)[None, :], nu_index, nu)
-        zero_fiber_max = max(zero_fiber_max, float(torch.max(torch.abs(zero)).cpu()))
+        zero_fiber_max = max(
+            zero_fiber_max,
+            float(torch.max(torch.abs(zero)).detach().cpu()),
+        )
         jacobian = torch.autograd.functional.jacobian(
             lambda value: certificate(state, value[None, :], nu_index, nu)[0],
             error,
