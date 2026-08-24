@@ -649,7 +649,7 @@ def run(
         "validation",
         grid,
         matrix,
-        seeds=joint.VALIDATION_CASE_SEEDS,
+        seeds=tuple(int(seed) for seed in frozen["validation_case_seeds"]),
         base_case_limit=int(frozen["validation_base_case_limit"]),
         stress_truths=int(frozen["stress_truths_per_split"]),
     )

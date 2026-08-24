@@ -19,6 +19,7 @@ from allen_cahn_certified_observer import (
     CausalOutputInjection,
     allen_cahn_rhs,
     build_conditional_residual_transform,
+    build_preconditioned_conditional_residual_transform,
     build_projected_constant_gain,
     lmi_modal_injection,
     local_average_matrix,
@@ -693,22 +694,14 @@ def _structure_audit(
         singular_maximum = max(singular_maximum, float(np.max(singular)))
 
     transformed = transform(states, errors)
-    current = transformed
-    converged = torch.zeros(
-        states.shape[0], dtype=torch.bool, device=states.device
+    current, converged, iterations_used = (
+        transform.inverse_fixed_point_diagnostics(
+            states,
+            transformed,
+            max_iterations=50,
+            tolerance=1.0e-8,
+        )
     )
-    iterations_used = 0
-    offset = transform.g(states, torch.zeros_like(errors))
-    for iteration in range(1, 51):
-        next_value = transformed - transform.g(states, current) + offset
-        differences = torch.max(
-            torch.abs(next_value - current), dim=1
-        ).values
-        converged |= differences <= 1.0e-8
-        current = next_value
-        iterations_used = iteration
-        if bool(torch.all(converged)):
-            break
     inverse_relative = torch.sqrt(
         grid.h * torch.sum((current - errors) ** 2, dim=1)
         / (grid.h * torch.sum(errors**2, dim=1) + 1.0e-12)
@@ -758,6 +751,53 @@ def _structure_audit(
         .detach()
         .cpu()
     )
+    normalized = transform.normalized_forward(states, errors)
+    normalized_doubled = transform.normalized_forward(states, 2.0 * errors)
+    eta_e_normalized = float(
+        (
+            torch.mean(
+                torch.sqrt(
+                    grid.h
+                    * torch.sum(
+                        (normalized_doubled - 2.0 * normalized) ** 2,
+                        dim=1,
+                    )
+                )
+            )
+            / (
+                torch.mean(
+                    torch.sqrt(grid.h * torch.sum(normalized**2, dim=1))
+                )
+                + 1.0e-12
+            )
+        )
+        .detach()
+        .cpu()
+    )
+    normalized_conditioned = transform.normalized_forward(
+        reversed_states, errors
+    )
+    eta_u_normalized = float(
+        (
+            torch.mean(
+                torch.sqrt(
+                    grid.h
+                    * torch.sum(
+                        (normalized - normalized_conditioned) ** 2,
+                        dim=1,
+                    )
+                )
+            )
+            / (
+                torch.mean(
+                    torch.sqrt(grid.h * torch.sum(normalized**2, dim=1))
+                )
+                + 1.0e-12
+            )
+        )
+        .detach()
+        .cpu()
+    )
     generator = torch.Generator(device="cpu").manual_seed(1441)
     directions = torch.randn(
         errors.shape,
@@ -785,6 +825,8 @@ def _structure_audit(
         and np.isfinite(inverse_maximum)
         and np.isfinite(eta_e)
         and np.isfinite(eta_u)
+        and np.isfinite(eta_e_normalized)
+        and np.isfinite(eta_u_normalized)
     )
     spectral_passed = bool(2.0 * lipschitz <= transform.rho + 1.0e-6)
     jacobian_passed = bool(
@@ -796,8 +838,8 @@ def _structure_audit(
         and inverse_maximum <= INVERSE_RELATIVE_TOLERANCE
     )
     nonlinear_passed = bool(
-        eta_e >= NONLINEARITY_THRESHOLD
-        and eta_u >= NONLINEARITY_THRESHOLD
+        eta_e_normalized >= NONLINEARITY_THRESHOLD
+        and eta_u_normalized >= NONLINEARITY_THRESHOLD
     )
     return {
         "sample_count": int(indices.size),
@@ -814,6 +856,14 @@ def _structure_audit(
             transform.lower_jacobian_bound,
             transform.upper_jacobian_bound,
         ],
+        "normalized_jacobian_bounds": [
+            transform.normalized_lower_jacobian_bound,
+            transform.normalized_upper_jacobian_bound,
+        ],
+        "base_transform_singular_bounds": [
+            transform.base_min_singular,
+            transform.base_max_singular,
+        ],
         "jacobian_passed": jacobian_passed,
         "inverse_all_converged": bool(torch.all(converged)),
         "inverse_iterations_used": iterations_used,
@@ -821,6 +871,9 @@ def _structure_audit(
         "inverse_passed": inverse_passed,
         "eta_e": eta_e,
         "eta_u": eta_u,
+        "eta_e_normalized": eta_e_normalized,
+        "eta_u_normalized": eta_u_normalized,
+        "nonlinear_gate_coordinates": "normalized_residual_S",
         "nonlinear_dependence_passed": nonlinear_passed,
         "second_directional_difference_rms": float(
             torch.sqrt(torch.mean(second_norms**2)).detach().cpu()
@@ -921,6 +974,7 @@ def _train_seed(
     grid: AllenCahnGrid,
     matrix: np.ndarray,
     base_gain: np.ndarray,
+    base_transform: np.ndarray,
     train_cases: list[ExperimentCase],
     validation_cases: list[ExperimentCase],
     train_truth: TruthRollouts,
@@ -940,6 +994,7 @@ def _train_seed(
     transform_learning_rate: float,
     inverse_iterations: int,
     checkpoint_dir: Path,
+    transform_base: str,
 ) -> tuple[object, object, dict[str, object]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
@@ -947,13 +1002,29 @@ def _train_seed(
     gain = build_projected_constant_gain(
         torch, base_gain, trust_ratio=gain_trust_ratio
     ).to(device=device, dtype=torch.float32)
-    transform = build_conditional_residual_transform(
-        torch,
-        grid.n,
-        hidden_width=hidden_width,
-        hidden_layers=hidden_layers,
-        rho=rho,
-    ).to(device=device, dtype=torch.float32)
+    if transform_base == "identity":
+        transform = build_conditional_residual_transform(
+            torch,
+            grid.n,
+            hidden_width=hidden_width,
+            hidden_layers=hidden_layers,
+            rho=rho,
+        )
+        experiment_kind = "r5-nonlinear-target-conditional-residual-joint"
+    elif transform_base == "lmi":
+        transform = build_preconditioned_conditional_residual_transform(
+            torch,
+            base_transform,
+            hidden_width=hidden_width,
+            hidden_layers=hidden_layers,
+            rho=rho,
+        )
+        experiment_kind = (
+            "r5-nonlinear-target-T0-preconditioned-residual-joint"
+        )
+    else:
+        raise ValueError("transform_base must be 'identity' or 'lmi'")
+    transform = transform.to(device=device, dtype=torch.float32)
     optimizer = torch.optim.Adam(
         [
             {"params": gain.parameters(), "lr": gain_learning_rate},
@@ -1128,13 +1199,15 @@ def _train_seed(
     checkpoint = checkpoint_dir / f"joint__grid-31__seed-{seed}.pt"
     torch.save(
         {
-            "kind": "r5-nonlinear-target-conditional-residual-joint",
+            "kind": experiment_kind,
             "grid_size": grid.n,
             "nu": NU_VALUE,
             "seed": seed,
             "gain_state_dict": gain.state_dict(),
             "transform_state_dict": transform.state_dict(),
             "base_gain": base_gain,
+            "base_transform": base_transform,
+            "transform_base": transform_base,
             "sensor_intervals": THREE_SENSOR_INTERVALS,
             "rho": rho,
             "hidden_width": hidden_width,
@@ -1201,9 +1274,15 @@ def run(
     stress_truths_per_split: int,
     device: str,
     checkpoint_dir: Path,
+    transform_base: str = "identity",
+    train_case_seeds: Sequence[int] = TRAIN_CASE_SEEDS,
+    validation_case_seeds: Sequence[int] = VALIDATION_CASE_SEEDS,
+    test_case_seeds: Sequence[int] = TEST_CASE_SEEDS,
 ) -> dict[str, object]:
     if not seeds:
         raise ValueError("at least one model seed is required")
+    if transform_base not in {"identity", "lmi"}:
+        raise ValueError("transform_base must be 'identity' or 'lmi'")
     grid = AllenCahnGrid(GRID_SIZE)
     matrix = local_average_matrix(grid, THREE_SENSOR_INTERVALS)
     base_gain, base_transform, base_diagnostics = _design_base(grid, matrix)
@@ -1211,7 +1290,7 @@ def run(
         "train",
         grid,
         matrix,
-        seeds=TRAIN_CASE_SEEDS,
+        seeds=train_case_seeds,
         base_case_limit=train_base_case_limit,
         stress_truths=stress_truths_per_split,
     )
@@ -1219,7 +1298,7 @@ def run(
         "validation",
         grid,
         matrix,
-        seeds=VALIDATION_CASE_SEEDS,
+        seeds=validation_case_seeds,
         base_case_limit=validation_base_case_limit,
         stress_truths=stress_truths_per_split,
     )
@@ -1227,7 +1306,7 @@ def run(
         "test",
         grid,
         matrix,
-        seeds=TEST_CASE_SEEDS,
+        seeds=test_case_seeds,
         base_case_limit=test_base_case_limit,
         stress_truths=stress_truths_per_split,
     )
@@ -1259,6 +1338,7 @@ def run(
             grid,
             matrix,
             base_gain,
+            base_transform,
             train_cases,
             validation_cases,
             train_truth,
@@ -1277,6 +1357,7 @@ def run(
             transform_learning_rate=transform_learning_rate,
             inverse_iterations=inverse_iterations,
             checkpoint_dir=checkpoint_dir,
+            transform_base=transform_base,
         )
         models[seed] = (gain, transform)
         seed_results.append(result)
@@ -1316,8 +1397,18 @@ def run(
             "rollout": test_rollout,
         }
         test_evaluated = True
+    experiment_kind = (
+        "r5-nonlinear-target-conditional-residual-joint"
+        if transform_base == "identity"
+        else "r5-nonlinear-target-T0-preconditioned-residual-joint"
+    )
+    transform_description = (
+        "e + g_phi(u,e) - g_phi(u,0)"
+        if transform_base == "identity"
+        else "T0 [e + g_tilde_phi(u,e) - g_tilde_phi(u,0)]"
+    )
     return {
-        "kind": "r5-nonlinear-target-conditional-residual-joint",
+        "kind": experiment_kind,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "git_commit": _git_head(),
         "environment": {
@@ -1340,7 +1431,8 @@ def run(
             "target": (
                 "A z + F(u + z) - F(u) - (1 + lambda) z"
             ),
-            "transform": "e + g_phi(u,e) - g_phi(u,0)",
+            "transform": transform_description,
+            "transform_base": transform_base,
             "loss_terms": [
                 "dynamics_contraction",
                 "nonlinear_target_defect",
@@ -1359,9 +1451,9 @@ def run(
             "gain_learning_rate": gain_learning_rate,
             "transform_learning_rate": transform_learning_rate,
             "inverse_iterations": inverse_iterations,
-            "train_case_seeds": TRAIN_CASE_SEEDS,
-            "validation_case_seeds": VALIDATION_CASE_SEEDS,
-            "test_case_seeds": TEST_CASE_SEEDS,
+            "train_case_seeds": list(train_case_seeds),
+            "validation_case_seeds": list(validation_case_seeds),
+            "test_case_seeds": list(test_case_seeds),
             "train_base_case_limit": train_base_case_limit,
             "validation_base_case_limit": validation_base_case_limit,
             "test_base_case_limit": test_base_case_limit,

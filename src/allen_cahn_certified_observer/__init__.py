@@ -21,6 +21,7 @@ from .local_certificate import (
 )
 from .nonlinear_target import (
     build_conditional_residual_transform,
+    build_preconditioned_conditional_residual_transform,
     build_projected_constant_gain,
     nonlinear_target_rhs,
     nonlinear_target_tensor,
@@ -90,6 +91,7 @@ __all__ = [
     "audit_certificate",
     "audit_high_frequency_tail",
     "build_conditional_residual_transform",
+    "build_preconditioned_conditional_residual_transform",
     "build_projected_constant_gain",
     "dirichlet_laplacian_rates",
     "dirichlet_sine_basis",

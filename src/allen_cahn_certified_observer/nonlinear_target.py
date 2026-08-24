@@ -147,6 +147,10 @@ def build_conditional_residual_transform(
             self.rho = float(rho)
             self.lower_jacobian_bound = lower
             self.upper_jacobian_bound = upper
+            self.normalized_lower_jacobian_bound = lower
+            self.normalized_upper_jacobian_bound = upper
+            self.base_min_singular = 1.0
+            self.base_max_singular = 1.0
             self.per_layer_spectral_bound = per_layer_bound
 
             for layer in self.error_layers:
@@ -176,6 +180,11 @@ def build_conditional_residual_transform(
             zero = torch.zeros_like(errors)
             return errors + self.g(states, errors) - self.g(states, zero)
 
+        def normalized_forward(self, states: object, errors: object) -> object:
+            """Return the identity-centered residual coordinate S(u,e)."""
+
+            return self.forward(states, errors)
+
         def inverse_fixed_point(
             self,
             states: object,
@@ -193,6 +202,43 @@ def build_conditional_residual_transform(
                     transformed_errors - self.g(states, current) + offset
                 )
             return current
+
+        def inverse_fixed_point_diagnostics(
+            self,
+            states: object,
+            transformed_errors: object,
+            *,
+            max_iterations: int = 50,
+            tolerance: float = 1.0e-8,
+        ) -> tuple[object, object, int]:
+            """Invert S and return the final per-sample convergence mask."""
+
+            if max_iterations < 1:
+                raise ValueError("max_iterations must be positive")
+            if tolerance <= 0.0:
+                raise ValueError("tolerance must be positive")
+            zero = torch.zeros_like(transformed_errors)
+            offset = self.g(states, zero)
+            current = transformed_errors
+            converged = torch.zeros(
+                transformed_errors.shape[0],
+                dtype=torch.bool,
+                device=transformed_errors.device,
+            )
+            iterations_used = 0
+            for iteration in range(1, max_iterations + 1):
+                next_value = (
+                    transformed_errors - self.g(states, current) + offset
+                )
+                differences = torch.max(
+                    torch.abs(next_value - current), dim=1
+                ).values
+                current = next_value
+                converged = differences <= tolerance
+                iterations_used = iteration
+                if bool(torch.all(converged)):
+                    break
+            return current, converged, iterations_used
 
         def spectral_weights(self) -> tuple[object, ...]:
             return tuple(
@@ -228,6 +274,119 @@ def build_conditional_residual_transform(
                         )
 
     return ConditionalResidualTransform()
+
+
+def build_preconditioned_conditional_residual_transform(
+    torch: object,
+    base_transform: np.ndarray,
+    *,
+    hidden_width: int = 128,
+    hidden_layers: int = 3,
+    rho: float = 0.5,
+) -> object:
+    """Build T(u,e)=T_0[e+g(u,e)-g(u,0)] with a fixed invertible T_0."""
+
+    base = np.asarray(base_transform, dtype=float)
+    if base.ndim != 2 or base.shape[0] < 1 or base.shape[0] != base.shape[1]:
+        raise ValueError("base_transform must be a non-empty square matrix")
+    if not np.all(np.isfinite(base)):
+        raise ValueError("base_transform must be finite")
+    singular = np.linalg.svd(base, compute_uv=False)
+    if float(np.min(singular)) <= 0.0:
+        raise ValueError("base_transform must be invertible")
+    dimension = int(base.shape[0])
+    residual = build_conditional_residual_transform(
+        torch,
+        dimension,
+        hidden_width=hidden_width,
+        hidden_layers=hidden_layers,
+        rho=rho,
+    )
+    normalized_lower, normalized_upper = residual_jacobian_bounds(rho)
+    nn = torch.nn
+
+    class PreconditionedConditionalResidualTransform(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.residual_transform = residual
+            self.register_buffer(
+                "base_transform",
+                torch.as_tensor(base, dtype=torch.float32),
+            )
+            self.dimension = dimension
+            self.hidden_width = hidden_width
+            self.hidden_layers = hidden_layers
+            self.rho = float(rho)
+            self.normalized_lower_jacobian_bound = normalized_lower
+            self.normalized_upper_jacobian_bound = normalized_upper
+            self.base_min_singular = float(np.min(singular))
+            self.base_max_singular = float(np.max(singular))
+            self.lower_jacobian_bound = (
+                self.base_min_singular * normalized_lower
+            )
+            self.upper_jacobian_bound = (
+                self.base_max_singular * normalized_upper
+            )
+            self.per_layer_spectral_bound = (
+                residual.per_layer_spectral_bound
+            )
+
+        def normalized_forward(self, states: object, errors: object) -> object:
+            return self.residual_transform(states, errors)
+
+        def forward(self, states: object, errors: object) -> object:
+            normalized = self.normalized_forward(states, errors)
+            return normalized @ self.base_transform.T
+
+        def _normalize_target(self, transformed_errors: object) -> object:
+            return torch.linalg.solve(
+                self.base_transform, transformed_errors.T
+            ).T
+
+        def inverse_fixed_point(
+            self,
+            states: object,
+            transformed_errors: object,
+            *,
+            iterations: int = 12,
+        ) -> object:
+            return self.residual_transform.inverse_fixed_point(
+                states,
+                self._normalize_target(transformed_errors),
+                iterations=iterations,
+            )
+
+        def inverse_fixed_point_diagnostics(
+            self,
+            states: object,
+            transformed_errors: object,
+            *,
+            max_iterations: int = 50,
+            tolerance: float = 1.0e-8,
+        ) -> tuple[object, object, int]:
+            return self.residual_transform.inverse_fixed_point_diagnostics(
+                states,
+                self._normalize_target(transformed_errors),
+                max_iterations=max_iterations,
+                tolerance=tolerance,
+            )
+
+        def spectral_weights(self) -> tuple[object, ...]:
+            return self.residual_transform.spectral_weights()
+
+        def spectral_norms_tensor(self) -> object:
+            return self.residual_transform.spectral_norms_tensor()
+
+        def residual_lipschitz_bound_tensor(self) -> object:
+            return self.residual_transform.residual_lipschitz_bound_tensor()
+
+        def residual_lipschitz_bound(self) -> float:
+            return self.residual_transform.residual_lipschitz_bound()
+
+        def project_spectral_(self) -> None:
+            self.residual_transform.project_spectral_()
+
+    return PreconditionedConditionalResidualTransform()
 
 
 def build_projected_constant_gain(

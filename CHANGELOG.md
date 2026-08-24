@@ -100,6 +100,9 @@
 
 ## Unreleased
 
+- Implemented the pre-registered T0-preconditioned conditional invertible residual transform, fresh
+  train/validation/test splits, normalized-coordinate nonlinearity gates, and a dedicated joint-training
+  entry point while retaining the complete nonlinear target and the original four-term objective.
 - Added the R5 low-frequency certificate mode with grid-consistent physical sine projections,
   projected online correction, and separate high-frequency tail/coupling audits.
 - Completed the R5 low-frequency/tail three-grid run and independent replay: the high-frequency
