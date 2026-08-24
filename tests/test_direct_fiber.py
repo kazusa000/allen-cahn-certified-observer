@@ -21,6 +21,7 @@ from r5_direct_fiber_multigrid_joint import (
 )
 from r5_direct_fiber_adversarial_repair import (
     _adversarial_low_mode_samples,
+    _append_adversary_memory,
     _hard_point_neighborhood,
     _seed_for_epoch,
 )
@@ -107,6 +108,23 @@ def test_hard_replay_center_exactly_matches_consumed_bad_point() -> None:
     assert neighborhood["errors"][0] == pytest.approx(
         consumed["errors"][471], abs=2.0e-7, rel=2.0e-7
     )
+
+
+def test_adversary_memory_accumulates_before_deterministic_truncation() -> None:
+    first = {
+        "states": np.asarray([[1.0], [2.0]]),
+        "errors": np.asarray([[10.0], [20.0]]),
+    }
+    second = {
+        "states": np.asarray([[3.0], [4.0]]),
+        "errors": np.asarray([[30.0], [40.0]]),
+    }
+
+    accumulated = _append_adversary_memory(None, first, limit=3)
+    accumulated = _append_adversary_memory(accumulated, second, limit=3)
+
+    assert accumulated["states"][:, 0].tolist() == [2.0, 3.0, 4.0]
+    assert accumulated["errors"][:, 0].tolist() == [20.0, 30.0, 40.0]
 
 
 def test_low_mode_adversarial_search_is_differentiable_and_projected() -> None:

@@ -108,6 +108,8 @@
 - Added monotone checkpoint-capacity expansion so the common-LMI diagnosis can
   be followed by one controlled rho/gain-domain repair without changing the
   inherited checkpoint function.
+- Corrected the min-max implementation to accumulate discovered adversarial
+  constraints instead of replacing them at every refresh.
 - Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
   locked-test policy unchanged.
 
