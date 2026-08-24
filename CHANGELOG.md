@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Drafted the next R5 joint-training plan at `nu=0.005`, three sensors, and
+  `n=31`: replace the unjustified linear target with an analytically contractive
+  nonlinear Allen--Cahn target, replace `P(u)e` with a spectrally bounded
+  conditional invertible residual network, and retain exactly four normalized
+  training objectives with validation-locked acceptance gates.
 - Completed the exact-commit RTX 2060 `nu=0.005` joint multigrid run. Joint
   `B+T_phi` training reduced validation dynamics-defect RMS on grids 31, 63,
   and 127, but every grid failed the frozen worst-contraction, 25%-RMS, and
