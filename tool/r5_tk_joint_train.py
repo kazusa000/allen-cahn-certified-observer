@@ -1184,7 +1184,7 @@ def _defect_audit(
 
 def _tail_audit(
     torch: object,
-    gain: object,
+    gain: object | None,
     sample_set: JointSampleSet,
     grid: AllenCahnGrid,
     matrix: np.ndarray,
@@ -1192,27 +1192,34 @@ def _tail_audit(
     low_modes: int,
     device: str,
     batch_size: int = 512,
+    fixed_gain: float | None = None,
 ) -> dict[str, object]:
     """Compute the low/high decomposition and sampled tail inequality terms."""
 
-    samples = _tensorize_samples(torch, sample_set, grid, device)
-    matrix_tensor = torch.as_tensor(matrix, dtype=torch.float32, device=device)
-    correction_rows: list[np.ndarray] = []
     count = sample_set.states.shape[0]
-    with torch.no_grad():
-        for start in range(0, count, batch_size):
-            stop = min(start + batch_size, count)
-            estimates = samples["estimates"][start:stop]
-            measurements = samples["measurements"][start:stop]
-            nus = samples["nus"][start:stop]
-            features, innovations = _feature_tensor(
-                torch, estimates, measurements, nus, matrix_tensor, grid.h
-            )
-            gains = gain(features)
-            correction_rows.append(
-                torch.bmm(gains, innovations[:, :, None]).squeeze(-1).cpu().numpy()
-            )
-    corrections = np.concatenate(correction_rows)
+    if (gain is None) == (fixed_gain is None):
+        raise ValueError("provide exactly one of gain or fixed_gain")
+    if fixed_gain is not None:
+        innovations = sample_set.measurements - sample_set.estimates @ matrix.T
+        corrections = fixed_gain * (innovations @ matrix) / grid.h
+    else:
+        samples = _tensorize_samples(torch, sample_set, grid, device)
+        matrix_tensor = torch.as_tensor(matrix, dtype=torch.float32, device=device)
+        correction_rows: list[np.ndarray] = []
+        with torch.no_grad():
+            for start in range(0, count, batch_size):
+                stop = min(start + batch_size, count)
+                estimates = samples["estimates"][start:stop]
+                measurements = samples["measurements"][start:stop]
+                nus = samples["nus"][start:stop]
+                features, innovations = _feature_tensor(
+                    torch, estimates, measurements, nus, matrix_tensor, grid.h
+                )
+                gains = gain(features)
+                correction_rows.append(
+                    torch.bmm(gains, innovations[:, :, None]).squeeze(-1).cpu().numpy()
+                )
+        corrections = np.concatenate(correction_rows)
     errors = sample_set.estimates - sample_set.states
     by_nu: dict[str, object] = {}
     for nu_index, nu in enumerate(sample_set.nu_values):
@@ -1593,19 +1600,20 @@ def run(
                 for name, sample_set in audit_sets.items()
             }
             if low_modes is not None:
-                tail_audits = {
-                    name: _tail_audit(
+                tail_audits = {}
+                for name, sample_set in audit_sets.items():
+                    is_fixed = name.startswith("fixed_gain_")
+                    tail_audits[name] = _tail_audit(
                         torch,
-                        gain,
+                        None if is_fixed else gain,
                         sample_set,
                         grid,
                         matrix,
                         low_modes=low_modes,
                         device=device,
                         batch_size=batch_size,
+                        fixed_gain=base_gain if is_fixed else None,
                     )
-                    for name, sample_set in audit_sets.items()
-                }
         if checkpoint_dir is not None:
             torch.save(
                 {

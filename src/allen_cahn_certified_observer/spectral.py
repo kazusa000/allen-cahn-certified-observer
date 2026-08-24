@@ -70,7 +70,7 @@ def sampled_forced_tail_envelope(
     """Propagate a sampled envelope for ``q' <= -a q + f``.
 
     A non-increasing time stamp starts a new trajectory. On each saved time
-    interval the forcing is bounded by the larger endpoint value. The result
+    trajectory the forcing is bounded by its maximum saved value. The result
     is a reproducible sampled envelope, not a continuous-time bound between
     saved outputs.
     """
@@ -93,19 +93,20 @@ def sampled_forced_tail_envelope(
     if np.any(tail_array < 0.0) or np.any(forcing_array < 0.0):
         raise ValueError("norm inputs must be non-negative")
 
+    reset_indices = np.flatnonzero(np.diff(time_array) <= 0.0) + 1
+    starts = np.concatenate(([0], reset_indices))
+    stops = np.concatenate((reset_indices, [time_array.size]))
     envelope = np.empty_like(tail_array)
-    envelope[0] = tail_array[0]
-    for index in range(1, time_array.size):
-        dt = time_array[index] - time_array[index - 1]
-        if dt <= 0.0:
-            envelope[index] = tail_array[index]
-            continue
-        contraction = np.exp(-decay_margin * dt)
-        interval_forcing = max(forcing_array[index - 1], forcing_array[index])
-        envelope[index] = (
-            contraction * envelope[index - 1]
-            + (1.0 - contraction) * interval_forcing / decay_margin
-        )
+    for start, stop in zip(starts, stops, strict=True):
+        trajectory_forcing = float(np.max(forcing_array[start:stop]))
+        envelope[start] = tail_array[start]
+        for index in range(start + 1, stop):
+            dt = time_array[index] - time_array[index - 1]
+            contraction = np.exp(-decay_margin * dt)
+            envelope[index] = (
+                contraction * envelope[index - 1]
+                + (1.0 - contraction) * trajectory_forcing / decay_margin
+            )
     return envelope
 
 
