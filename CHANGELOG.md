@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Froze a thesis-focused multigrid follow-up at `nu=0.005`: train only the native
+  joint `B+T_phi` model independently on grids 31, 63, and 127, retain fixed LMI
+  designs only as per-grid references, and compare validation dynamics and safety
+  trends without test evaluation or early grid stopping.
 - Froze the R5 three-sensor dynamics-joint experiment: six fixed/learned `B`/`T_phi`
   ablations, research-plan stable and continuous-defect losses, an ODE-inspired
   input-direction ablation, validation-only selection, and explicit gates for the
