@@ -19,6 +19,11 @@
   joint residuals can be selected without test leakage before any multi-grid expansion.
 - Regularized the zero-initialized gain-residual norm and added a pre-update finite-gradient gate after
   the first remote smoke exposed an undefined zero-norm derivative.
+- Completed the CPU matrix/nonlinear gate and the frozen RTX 2060 joint-training screen. Five evenly
+  distributed sensors passed all nine global semidiscrete certificate checks and nonlinear/noise
+  validation. The original two sensors were linearly stabilizable with a general output injection, but
+  every trained configuration failed both the positive-worst-contraction and nu=0.005 online-
+  no-regression gates, so multi-grid expansion and test evaluation remained locked.
 
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
