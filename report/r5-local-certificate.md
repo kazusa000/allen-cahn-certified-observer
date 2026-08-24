@@ -5,10 +5,10 @@
 - ID：R5-local-certificate-2026-08-24
 - 类型：Experiment Result
 - 状态：VERIFIED — NO PRE-REGISTERED REGION PASSED
-- 代码提交：`7ce71611e59572e7a066973299ad1248aca2679f`，报告与字段整理见后续提交
+- 运行代码提交：`e1c97381d73805e504cef44897500ad63df9f81d`
 - 执行节点：局域网直连 `192.168.1.220`，RTX 2060 6GB
-- 正式输出：`out/2026-08-24-r5-local-certificate-formal-192-direct/results.json`
-- 正式输出 SHA-256：`ed9f6dcc9ea826351a43cc107032c37bcf8d2601739dbfb8d85cfbd8677281d0`
+- 正式输出：`out/2026-08-24-r5-local-certificate-formal-v2-192-direct/results.json`
+- 正式输出 SHA-256：`a89ae05f7d33f17dda57a9405242e63b539e67d347b97f93096bc2ad9a3a93bb`
 - 正式运行退出码：0
 - 测试：30 passed
 
@@ -107,4 +107,3 @@ Jacobian 奇异值、在线误差以及固定增益 0.10 的同轨迹误差。�
 因此本路线对当前 \(T_\phi\) 给出可复现的负结果，不支持局部稳定证书。该结论不证明所有
 局部变换都不可能成功；它准确限定为：现有 checkpoint 即使按预注册物理区域限制，也无法
 满足研究计划中固定稳定目标所需的最坏样本条件。
-
