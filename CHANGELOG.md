@@ -103,6 +103,9 @@
 - Implemented the pre-registered T0-preconditioned conditional invertible residual transform, fresh
   train/validation/test splits, normalized-coordinate nonlinearity gates, and a dedicated joint-training
   entry point while retaining the complete nonlinear target and the original four-term objective.
+- Completed the three-seed RTX 2060 run: every seed passed contraction, target-defect, invertibility,
+  and online gates, but all failed the frozen normalized nonlinear-in-error gate, so the locked test
+  remained untouched.
 - Added the R5 low-frequency certificate mode with grid-consistent physical sine projections,
   projected online correction, and separate high-frequency tail/coupling audits.
 - Completed the R5 low-frequency/tail three-grid run and independent replay: the high-frequency
