@@ -162,8 +162,19 @@ r_n=
 - **Environment**：2060，RTX 2060 6 GB，CUDA。
 - **Timeout**：12 小时硬超时；每 30--60 秒监控进程、日志和 GPU。
 - **Expected Output**：不可覆盖的 JSON、每网格三个 checkpoint、运行日志和退出状态。
-- **Entry Command**：实现后将精确命令补入本文件；正式运行前提交、推送并核验本地、跟踪
-  分支和远程 SHA 完全一致。
+- **Entry Command**：
+
+  ```bash
+  PYTHONPATH=src:tool python tool/r5_three_sensor_nu005_multigrid_joint.py \
+    --seeds 501 502 503 --epochs 80 --batch-size 512 \
+    --refresh-interval 20 --device cuda \
+    --train-limit-per-nu 16 --validation-limit-per-nu 8 \
+    --stress-truths-per-nu 2 \
+    --checkpoint-dir out/<新目录>/checkpoints \
+    --output out/<新目录>/results.json
+  ```
+
+- 正式运行前提交、推送并核验本地、跟踪分支和远程 SHA 完全一致。
 
 ## Analysis Plan
 

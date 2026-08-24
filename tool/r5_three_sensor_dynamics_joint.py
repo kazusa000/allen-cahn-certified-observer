@@ -797,6 +797,7 @@ def _run_grid(
     grid_size: int,
     variants: tuple[Variant, ...],
     *,
+    baseline_variants: tuple[Variant, ...] = BASELINE_VARIANTS,
     seeds: list[int],
     epochs: int,
     batch_size: int,
@@ -849,7 +850,7 @@ def _run_grid(
             gain_trust_ratio=gain_trust_ratio,
             certificate_log_scale=certificate_log_scale,
         )
-        for variant in BASELINE_VARIANTS
+        for variant in baseline_variants
     }
     training: dict[str, object] = {}
     selected_models: dict[str, tuple[object, object]] = {}
