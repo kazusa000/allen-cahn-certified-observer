@@ -112,6 +112,9 @@
   constraints instead of replacing them at every refresh.
 - Completed the exchange step by re-evaluating the full adversarial memory and
   training on its current worst active constraints instead of random history.
+- Enabled the condition branch only after the frozen-condition active-set
+  plateau demonstrated that a single near-state-independent error geometry was
+  insufficient.
 - Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
   locked-test policy unchanged.
 
