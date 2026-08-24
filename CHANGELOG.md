@@ -20,6 +20,10 @@
   direct-dynamics collocation, trajectory, and online gates on grids 31, 63,
   and 127. Cancelled the unnecessary capacity expansion and moved formal
   validation from the consumed calibration seed 1801 to fresh seed 1851.
+- Recorded the first fresh-validation outcome: all three seeds failed only the
+  grid-63 random-collocation worst margin while passing every trajectory,
+  structure, and online gate. Reclassified seed 1851 as calibration and froze
+  a gain-versus-transform capacity attribution screen before any new split.
 - Froze the next fresh-split joint experiment around the LMI transform:
   `T_phi(u,e)=T0[e+g_tilde(u,e)-g_tilde(u,0)]`, retaining the full nonlinear
   target and exactly four losses while enforcing global invertibility in
