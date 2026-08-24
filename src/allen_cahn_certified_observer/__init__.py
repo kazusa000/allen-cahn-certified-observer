@@ -8,12 +8,14 @@ from .certificate import (
 )
 from .dataset import PilotCase, generate_pilot_cases, noise_waveform
 from .direct_fiber import (
+    buffered_contraction_cvar,
     build_low_modal_conditional_residual_transform,
     mesh_shared_fiber_transform,
     modal_residual_jacobian_bounds,
     modal_residual_path_layer_bound,
     physical_modal_coordinates,
     physical_modal_injection,
+    project_physical_modal_adversaries_,
     reconstruct_physical_modes,
 )
 from .grid import AllenCahnGrid
@@ -99,6 +101,7 @@ __all__ = [
     "allen_cahn_rhs",
     "audit_certificate",
     "audit_high_frequency_tail",
+    "buffered_contraction_cvar",
     "build_conditional_residual_transform",
     "build_low_modal_conditional_residual_transform",
     "build_preconditioned_conditional_residual_transform",
@@ -126,6 +129,7 @@ __all__ = [
     "partition_samples",
     "physical_modal_coordinates",
     "physical_modal_injection",
+    "project_physical_modal_adversaries_",
     "summarize_local_region",
     "transition_counts",
     "noise_waveform",

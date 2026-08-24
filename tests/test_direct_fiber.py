@@ -19,9 +19,14 @@ from r5_direct_fiber_multigrid_joint import (
     _positive_control,
     _torch_context,
 )
+from r5_direct_fiber_adversarial_repair import (
+    _adversarial_low_mode_samples,
+    _seed_for_epoch,
+)
 
 from allen_cahn_certified_observer import (
     AllenCahnGrid,
+    buffered_contraction_cvar,
     build_low_modal_conditional_residual_transform,
     build_projected_constant_gain,
     dirichlet_sine_basis,
@@ -32,9 +37,94 @@ from allen_cahn_certified_observer import (
     modal_residual_path_layer_bound,
     physical_modal_coordinates,
     physical_modal_injection,
+    project_physical_modal_adversaries_,
     reconstruct_physical_modes,
     unstable_modal_system,
 )
+
+
+def test_buffered_cvar_keeps_pressure_after_zero_margin() -> None:
+    torch = pytest.importorskip("torch")
+    margins = torch.tensor([0.01, 0.02, 0.03, 0.05], dtype=torch.float64)
+
+    loss = buffered_contraction_cvar(
+        torch, margins, buffer=0.04, tail_fraction=0.5
+    )
+
+    assert loss.item() == pytest.approx((0.03**2 + 0.02**2) / 2.0)
+
+
+def test_modal_adversary_projection_obeys_frozen_domain() -> None:
+    torch = pytest.importorskip("torch")
+    grid = AllenCahnGrid(31)
+    basis = torch.as_tensor(
+        dirichlet_sine_basis(grid, 8), dtype=torch.float64
+    )
+    states = torch.full((3, 8), 10.0, dtype=torch.float64)
+    errors = torch.tensor(
+        [[0.0, 0.0, 0.0, 0.0], [2.0, 0.0, 0.0, 0.0], [0.01, 0.0, 0.0, 0.0]],
+        dtype=torch.float64,
+    )
+
+    project_physical_modal_adversaries_(
+        torch, states, errors, basis, grid.h
+    )
+    state_values = (states @ basis.T) / np.sqrt(grid.h)
+    radii = torch.linalg.vector_norm(errors, dim=1)
+
+    assert torch.max(torch.abs(state_values)).item() <= 1.25 + 1.0e-12
+    assert torch.min(radii).item() >= 0.02 - 1.0e-12
+    assert torch.max(radii).item() <= 0.8 + 1.0e-12
+
+
+def test_resampling_seeds_change_by_model_epoch_and_grid() -> None:
+    seeds = {
+        _seed_for_epoch(model_seed, epoch, grid)
+        for model_seed in (1301, 1302)
+        for epoch in (0, 1)
+        for grid in (31, 63, 127)
+    }
+
+    assert len(seeds) == 12
+
+
+def test_low_mode_adversarial_search_is_differentiable_and_projected() -> None:
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("cvxpy")
+    base_gain, base_transform, _ = _base_design()
+    gain = build_projected_constant_gain(
+        torch, base_gain, trust_ratio=0.25
+    ).to(dtype=torch.float32)
+    transform = build_low_modal_conditional_residual_transform(
+        torch,
+        base_transform,
+        state_dimension=8,
+        hidden_width=8,
+        hidden_layers=1,
+        rho=0.35,
+    ).to(dtype=torch.float32)
+
+    samples, diagnostics = _adversarial_low_mode_samples(
+        torch,
+        transform,
+        gain,
+        model_seed=13,
+        refresh_index=0,
+        restart_count=8,
+        keep_count=4,
+        steps=2,
+        step_size=0.001,
+        device="cpu",
+    )
+    grid = AllenCahnGrid(63)
+    error_norms = np.sqrt(grid.h * np.sum(samples["errors"] ** 2, axis=1))
+
+    assert samples["states"].shape == (4, 63)
+    assert samples["errors"].shape == (4, 63)
+    assert np.max(np.abs(samples["states"])) <= 1.25 + 1.0e-5
+    assert np.min(error_norms) >= 0.02 - 1.0e-5
+    assert np.max(error_norms) <= 0.8 + 1.0e-5
+    assert diagnostics["final_margin_min"] <= diagnostics["initial_margin_min"]
 
 
 def test_modal_residual_budget_has_no_spurious_factor_two() -> None:

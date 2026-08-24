@@ -1,0 +1,121 @@
+# R5：低频坏点对抗修复实验计划
+
+## Material Passport
+
+- Origin Skill: academic-research-suite / experiment-agent
+- Origin Mode: plan
+- Origin Date: 2026-08-24
+- Verification Status: UNVERIFIED
+- Version Label: code_plan_v1
+
+## 研究问题
+
+在固定
+
+\[
+\nu=0.005,\qquad q=3,\qquad n\in\{31,63,127\}
+\]
+
+且共享同一个物理模态增益 \(\Beta\) 和条件可逆变换 \(T_\phi\) 时，能否通过低模态
+min--max 训练消除上一轮在 \(n=63\) 新 validation 集中出现的唯一坏点，同时保持其他网格、
+因果轨迹、在线误差和可逆性不退化？
+
+上一轮坏点只有前四个误差模态，且三个模型 seed 都在同一个样本附近失败。因此本轮检验的
+假设是：失败主要来自固定训练池和零缓冲 CVaR 对最坏低模态组合覆盖不足，而不是网络容量、
+高频尾部或真实轨迹动力学本身失败。
+
+## 冻结内容
+
+- 方程、\(\nu\)、三个传感器位置和网格 \(31,63,127\) 不变；
+- 网络结构保持
+
+  \[
+  T_{\phi,h}(u,e)
+  =V_{4,h}T_0[b+g_\phi(a,b)-g_\phi(a,0)]+(I-\Pi_{4,h})e;
+  \]
+
+- \(\rho=0.35\)、网络宽度 64、三层、增益 25% 信赖域不变；
+- 使用已修正换基矩阵
+
+  \[
+  R=\operatorname{diag}(-1,-1,1,1),\qquad
+  \Beta_0=\sqrt h\,RK,\qquad T_0=RP^{1/2}R^{\mathsf T};
+  \]
+
+- 从上一轮三个正式 checkpoint 分别继续训练，不交叉挑选 seed；
+- 在线误差项和增益正则项保留；不恢复人为非线性目标缺陷。
+
+## 唯一方法变化
+
+### 1. 每轮确定性重采样
+
+每个 epoch、每个网格重新生成独立 collocation，不再反复使用固定的 4096 点池。状态仍限制在
+前八个物理模态且 \(\|u\|_\infty\le 1.25\)，误差仍在前十二个物理模态且
+\(0.02\le\|e\|_h\le0.8\)。随机 seed 由模型 seed、epoch 和网格唯一确定并写入结果。
+
+### 2. \(n=63\) 低模态对抗搜索
+
+在每次刷新时，对 128 个随机初值同时优化前八个状态系数 \(a\) 和前四个误差系数 \(b\)，
+直接最小化真实误差动力学下的收缩率
+
+\[
+r_\phi(u,e)
+=-\frac{\langle T_{\phi,h}(u,e),\partial_tT_{\phi,h}(u,e)\rangle_h}
+{\|T_{\phi,h}(u,e)\|_h^2}.
+\]
+
+每步投影回上述紧域，保留最坏 64 点并回灌后续 \(n=63\) 训练批次。搜索不读取 validation
+或 locked test 样本，也不把上一轮编号 471 的精确坐标加入训练。
+
+### 3. 正余量训练
+
+上一轮损失在余量刚过零后梯度消失。本轮把训练铰链改为
+
+\[
+\mathcal L_{\rm rob}
+=\operatorname{CVaR}_{10\%}
+\left[\max\{0,\delta-(r_\phi-\alpha)\}^2\right],
+\qquad \delta=0.04.
+\]
+
+这要求训练点不仅通过 \(r_\phi\ge\alpha\)，还形成 0.04 的经验缓冲。
+
+## 分阶段运行与信息隔离
+
+1. **实现检查**：本地 CPU 小样本只检查梯度、投影、确定性和文件格式，不产生科学结论。
+2. **校准**：只用模型 seed 1303；训练不读取 validation，训练后在已经消费过的 seed 1851
+   上评估。只有三个网格全部门通过且最坏 collocation 余量至少为 \(+0.02\)，才冻结配置。
+3. **正式 validation**：固定配置后训练 seed 1301、1302、1303；使用从未读取的 seed 1871。
+   至少两个 seed 通过全部网格、轨迹、在线误差和结构门，才允许读取 locked test。
+4. **locked test**：仍使用 seed 1901，只评估 validation 中选中的模型；不根据 test 调参或重跑。
+
+## 预注册运行配置
+
+- 针对微调：40 epochs，每 epoch 24 steps，batch size 256；
+- 每 epoch 每网格重采样 2048 点；
+- 每 2 epochs 刷新一次 \(n=63\) 对抗池；128 restarts，15 个投影梯度步，步长 0.02，保留 64 点；
+- \(\delta=0.04\)；
+- 增益学习率 \(10^{-4}\)，变换学习率 \(3\times10^{-4}\)；
+- validation 每网格 4096 collocation；locked test 每网格 8192 collocation；
+- 因果轨迹门、在线终点误差门、结构可逆性门与上一轮完全相同。
+
+## 成功判据
+
+正式成功必须同时满足：
+
+1. 三个模型 seed 中至少两个通过全门；
+2. 对每个通过模型和每个网格，validation collocation 最坏余量非负；
+3. validation 因果轨迹保存点最坏余量非负；
+4. 终点误差中位数和最大值相对 \(B_0\) 分别不超过 1.05 和 1.10；
+5. \(T_\phi\) 的零纤维、谱界、采样 Jacobian 与数值求逆审计全部通过；
+6. 若进入 locked test，选中模型在三个网格的全部 test collocation 和轨迹也必须通过同一门。
+
+即使有限样本全部通过，也只称为“跨网格有限域经验最坏证书”，不外推为连续 PDE 紧集上的
+严格全局定理。
+
+## 停止规则
+
+- 若校准仍不能达到 \(+0.02\) 缓冲，不消费 seed 1871；
+- 若正式 validation 少于两个 seed 通过，不读取 seed 1901；
+- 若 locked test 失败，完整报告失败，不根据 test 修改配置；
+- 不通过继续扩大 \(\rho\)、网络或增益域来追逐单个点。

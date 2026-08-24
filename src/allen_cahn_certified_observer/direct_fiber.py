@@ -5,6 +5,89 @@ from __future__ import annotations
 import numpy as np
 
 
+def buffered_contraction_cvar(
+    torch: object,
+    margins: object,
+    *,
+    buffer: float,
+    tail_fraction: float = 0.1,
+) -> object:
+    """Penalize the worst buffered contraction-margin violations.
+
+    ``margins`` are measured relative to the requested contraction rate.  A
+    positive ``buffer`` keeps a gradient after the original zero-margin gate
+    has been crossed, which is essential when training for unseen worst cases.
+    """
+
+    target = float(buffer)
+    fraction = float(tail_fraction)
+    if not np.isfinite(target) or target <= 0.0:
+        raise ValueError("buffer must be positive and finite")
+    if not np.isfinite(fraction) or not 0.0 < fraction <= 1.0:
+        raise ValueError("tail_fraction must lie in (0, 1]")
+    if margins.ndim != 1 or margins.shape[0] < 1:
+        raise ValueError("margins must be a non-empty vector")
+    violations = torch.relu(target - margins) ** 2
+    tail_count = max(1, int(np.ceil(fraction * int(margins.shape[0]))))
+    return torch.mean(torch.topk(violations, tail_count).values)
+
+
+def project_physical_modal_adversaries_(
+    torch: object,
+    state_coefficients: object,
+    error_coefficients: object,
+    state_basis: object,
+    grid_step: float,
+    *,
+    state_maximum: float = 1.25,
+    error_radius_minimum: float = 0.02,
+    error_radius_maximum: float = 0.8,
+) -> None:
+    """Project modal adversaries into the frozen compact collocation domain."""
+
+    if state_coefficients.ndim != 2 or error_coefficients.ndim != 2:
+        raise ValueError("state and error coefficients must be matrices")
+    if state_coefficients.shape[0] != error_coefficients.shape[0]:
+        raise ValueError("state and error batches must match")
+    if state_coefficients.shape[1] != state_basis.shape[1]:
+        raise ValueError("state coefficients and basis have incompatible modes")
+    if not np.isfinite(grid_step) or grid_step <= 0.0:
+        raise ValueError("grid_step must be positive and finite")
+    maximum = float(state_maximum)
+    radius_minimum = float(error_radius_minimum)
+    radius_maximum = float(error_radius_maximum)
+    if not np.isfinite(maximum) or maximum <= 0.0:
+        raise ValueError("state_maximum must be positive and finite")
+    if (
+        not np.isfinite(radius_minimum)
+        or not np.isfinite(radius_maximum)
+        or radius_minimum <= 0.0
+        or radius_maximum < radius_minimum
+    ):
+        raise ValueError("error radii must define a positive finite interval")
+
+    with torch.no_grad():
+        states = (state_coefficients @ state_basis.T) / float(np.sqrt(grid_step))
+        amplitudes = torch.amax(torch.abs(states), dim=1, keepdim=True)
+        state_scales = torch.clamp(
+            maximum / amplitudes.clamp_min(1.0e-12), max=1.0
+        )
+        state_coefficients.mul_(state_scales)
+
+        radii = torch.linalg.vector_norm(error_coefficients, dim=1, keepdim=True)
+        zero = radii[:, 0] <= 1.0e-12
+        if bool(torch.any(zero)):
+            error_coefficients[zero] = 0.0
+            error_coefficients[zero, 0] = radius_minimum
+            radii = torch.linalg.vector_norm(
+                error_coefficients, dim=1, keepdim=True
+            )
+        target_radii = torch.clamp(
+            radii, min=radius_minimum, max=radius_maximum
+        )
+        error_coefficients.mul_(target_radii / radii.clamp_min(1.0e-12))
+
+
 def modal_residual_jacobian_bounds(rho: float) -> tuple[float, float]:
     """Return the singular-value bounds for ``I + D_b g``.
 

@@ -234,10 +234,12 @@ def _trajectory_cases(
     observation: np.ndarray,
     *,
     split: str,
+    seed: int | None = None,
     base_count: int = 6,
 ) -> list[TrajectoryCase]:
+    split_seed = SPLIT_SEEDS[split] if seed is None else int(seed)
     generator = np.random.Generator(
-        np.random.PCG64DXSM(SPLIT_SEEDS[split] + 2017 * grid.n)
+        np.random.PCG64DXSM(split_seed + 2017 * grid.n)
     )
     cases: list[TrajectoryCase] = []
     for index in range(base_count):

@@ -91,6 +91,16 @@
 - 建立实验工程。
 # Changelog
 
+## 2026-08-24 — Pre-register low-mode adversarial repair
+
+- Added a targeted repair plan using deterministic per-epoch resampling,
+  constrained low-mode adversarial search on grid 63, and a positive contraction
+  margin buffer.
+- Added the checkpoint-initialized repair runner, compact-domain projection,
+  buffered CVaR objective, and regression tests for the new training path.
+- Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
+  locked-test policy unchanged.
+
 - Planned the R5 observation-injection repair: a five-sensor certified baseline, a two-sensor
   oblique modal injection feasibility gate, nonlinear/noise validation, and a training-only-after-
   feasibility compute policy.
