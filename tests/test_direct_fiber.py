@@ -66,6 +66,7 @@ def test_low_modal_transform_is_zero_fiber_invertible_and_bounded() -> None:
         hidden_width=16,
         hidden_layers=2,
         rho=0.35,
+        error_scale=4.0,
     ).to(dtype=torch.float64)
     model.project_spectral_()
     states = torch.randn(7, 8, dtype=torch.float64)

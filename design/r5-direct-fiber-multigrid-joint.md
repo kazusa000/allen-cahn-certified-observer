@@ -218,3 +218,35 @@ locked test 都使用高精度因果观测器重新积分并报告终点与全�
 - 原始结果：新的 `out/<时间>-r5-direct-fiber-multigrid-joint/`；
 - 整理结论：`report/r5-direct-fiber-multigrid-joint-20260824.md`。
 
+## 预注册修订：正式运行前的容量筛选
+
+首个单 seed、80 epoch pilot 严格使用上述配置和 calibration seed 1801。结果显示
+$\rho=0.35$ 的谱预算和 25% 的增益信赖域都达到硬边界，但三个网格的最坏 validation
+余量仍为负，因此不直接重复三个 seed。该 pilot 没有读取 locked test。
+
+在保持同一 calibration split、同一模型 seed 1301、同一训练步数和 test 锁定的条件下，只筛选
+以下三组结构容量：
+
+| 方案 | $\rho$ | 增益信赖域 | 误差输入尺度 |
+|---|---:|---:|---:|
+| C1 | 0.65 | 0.50 | 1 |
+| C2 | 0.65 | 0.50 | 4 |
+| C3 | 0.85 | 0.75 | 4 |
+
+误差尺度化定义为
+
+\[
+g_{\phi,s}(a,b)=s^{-1}\bar g_\phi(sa,sb),\qquad s\geq1,
+\]
+
+并在每层使用等价的加性条件缩放。于是 $D_bg_{\phi,s}$ 中输入的 $s$ 与输出的 $s^{-1}$
+抵消，原有 $\|D_bg_{\phi,s}\|_2\leq\rho<1$ 和全局可逆性不变，但实际误差域不再被限制
+在 $\tanh$ 的近线性区。
+
+容量方案按以下顺序选择：先要求结构门和三个网格在线不退化门全部通过，再最大化三个网格中
+最坏的 collocation 余量，再最大化最坏轨迹余量。筛选只用于选结构，不产生正式结论。
+
+选定结构后，正式三 seed 运行把 validation collocation/trajectory seed 从已使用的 1801 改为
+全新的 1851；locked test seed 1901 不变且此前未生成。如果 C1--C3 都没有使最坏余量继续
+显著朝零移动，则停止三 seed 重复并报告当前低四模态条件残差模型的容量不足，不事后缩小
+状态/误差域。

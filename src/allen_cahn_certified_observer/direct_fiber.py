@@ -39,6 +39,7 @@ def build_low_modal_conditional_residual_transform(
     hidden_width: int = 64,
     hidden_layers: int = 3,
     rho: float = 0.35,
+    error_scale: float = 1.0,
 ) -> object:
     """Build a globally invertible conditional transform in modal coordinates.
 
@@ -77,6 +78,9 @@ def build_low_modal_conditional_residual_transform(
         or hidden_layers < 1
     ):
         raise ValueError("hidden_layers must be a positive integer")
+    scale = float(error_scale)
+    if not np.isfinite(scale) or scale < 1.0:
+        raise ValueError("error_scale must be finite and at least one")
 
     error_dimension = int(base.shape[0])
     normalized_lower, normalized_upper = modal_residual_jacobian_bounds(rho)
@@ -106,6 +110,7 @@ def build_low_modal_conditional_residual_transform(
             self.hidden_width = hidden_width
             self.hidden_layers = hidden_layers
             self.rho = float(rho)
+            self.error_scale = scale
             self.per_layer_spectral_bound = per_layer_bound
             self.normalized_lower_jacobian_bound = normalized_lower
             self.normalized_upper_jacobian_bound = normalized_upper
@@ -133,12 +138,15 @@ def build_low_modal_conditional_residual_transform(
 
         def g(self, states: object, errors: object) -> object:
             self._check_inputs(states, errors)
-            hidden = errors
+            hidden = self.error_scale * errors
             for error_layer, condition_layer in zip(
                 self.error_layers, self.condition_layers, strict=True
             ):
-                hidden = torch.tanh(error_layer(hidden) + condition_layer(states))
-            return self.output_layer(hidden)
+                hidden = torch.tanh(
+                    error_layer(hidden)
+                    + condition_layer(self.error_scale * states)
+                )
+            return self.output_layer(hidden) / self.error_scale
 
         def normalized_forward(self, states: object, errors: object) -> object:
             zero = torch.zeros_like(errors)
@@ -303,4 +311,3 @@ def physical_modal_injection(
     if not np.isfinite(grid_step) or grid_step <= 0.0:
         raise ValueError("grid_step must be positive and finite")
     return (low_basis @ physical_modal_gain) / float(np.sqrt(grid_step))
-

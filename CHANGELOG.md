@@ -8,6 +8,10 @@
   Allen--Cahn error dynamics, removes the structurally incompatible full-target
   defect from the objective, enforces invertibility by hard spectral projection,
   and keeps locked-test, gain-only, fixed-LMI, and four-sensor controls separate.
+- Added an invertibility-preserving error-scale parameter and pre-registered a
+  calibration-only capacity screen after the first full pilot saturated both
+  the residual spectral budget and the gain trust region; formal validation is
+  reserved for a fresh split after capacity selection.
 - Froze the next fresh-split joint experiment around the LMI transform:
   `T_phi(u,e)=T0[e+g_tilde(u,e)-g_tilde(u,0)]`, retaining the full nonlinear
   target and exactly four losses while enforcing global invertibility in

@@ -614,6 +614,7 @@ def _train_seed(
     gain_trust_ratio: float,
     gain_learning_rate: float,
     transform_learning_rate: float,
+    error_scale: float,
     device: str,
     checkpoint_dir: Path,
 ) -> tuple[object, object, dict[str, object]]:
@@ -630,6 +631,7 @@ def _train_seed(
         hidden_width=hidden_width,
         hidden_layers=hidden_layers,
         rho=rho,
+        error_scale=error_scale,
     ).to(device=device, dtype=torch.float32)
     optimizer = torch.optim.Adam(
         [
@@ -757,6 +759,7 @@ def _train_seed(
             "hidden_width": hidden_width,
             "hidden_layers": hidden_layers,
             "gain_trust_ratio": gain_trust_ratio,
+            "error_scale": error_scale,
         },
         checkpoint,
     )
@@ -956,6 +959,7 @@ def run(
     gain_trust_ratio: float,
     gain_learning_rate: float,
     transform_learning_rate: float,
+    error_scale: float,
     device: str,
     checkpoint_dir: Path,
 ) -> dict[str, object]:
@@ -1016,6 +1020,7 @@ def run(
             gain_trust_ratio=gain_trust_ratio,
             gain_learning_rate=gain_learning_rate,
             transform_learning_rate=transform_learning_rate,
+            error_scale=error_scale,
             device=device,
             checkpoint_dir=checkpoint_dir,
         )
@@ -1107,6 +1112,7 @@ def run(
             "hidden_width": hidden_width,
             "hidden_layers": hidden_layers,
             "gain_trust_ratio": gain_trust_ratio,
+            "error_scale": error_scale,
             "gain_learning_rate": gain_learning_rate,
             "transform_learning_rate": transform_learning_rate,
             "split_seeds": SPLIT_SEEDS,
@@ -1142,6 +1148,7 @@ def main() -> None:
     parser.add_argument("--hidden-width", type=int, default=64)
     parser.add_argument("--hidden-layers", type=int, default=3)
     parser.add_argument("--gain-trust-ratio", type=float, default=0.25)
+    parser.add_argument("--error-scale", type=float, default=1.0)
     parser.add_argument("--gain-learning-rate", type=float, default=3.0e-4)
     parser.add_argument("--transform-learning-rate", type=float, default=1.0e-3)
     parser.add_argument("--device", default="cuda")
@@ -1180,6 +1187,8 @@ def main() -> None:
         raise SystemExit("--rho must lie in (0, 1)")
     if not 0.0 < args.gain_trust_ratio < 1.0:
         raise SystemExit("--gain-trust-ratio must lie in (0, 1)")
+    if not np.isfinite(args.error_scale) or args.error_scale < 1.0:
+        raise SystemExit("--error-scale must be finite and at least one")
 
     import torch
 
@@ -1207,6 +1216,7 @@ def main() -> None:
         gain_trust_ratio=args.gain_trust_ratio,
         gain_learning_rate=args.gain_learning_rate,
         transform_learning_rate=args.transform_learning_rate,
+        error_scale=args.error_scale,
         device=args.device,
         checkpoint_dir=args.checkpoint_dir,
     )
@@ -1227,4 +1237,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
