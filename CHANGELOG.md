@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Completed the practical adversarial-repair target: the selected joint
+  `B+T_phi` checkpoint passed collocation, trajectory, online, and structural
+  gates on grids 31, 63, and 127, with worst margins `+0.12595`, `+0.02156`,
+  and `+0.07083`. Stopped the stricter third multi-seed continuation after the
+  user chose not to optimize around isolated 1-in-4096 tail points; fresh
+  validation and locked test remain unevaluated and no global certificate is
+  claimed.
 - Made the buffered-contraction CVaR tail fraction explicit and froze the final
   one-bad-point calibration at 1%, after the 10% tail diluted the only remaining
   grid-63 violation across roughly 26 samples per batch.

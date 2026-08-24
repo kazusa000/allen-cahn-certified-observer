@@ -5,8 +5,8 @@
 - Origin Skill: academic-research-suite / experiment-agent
 - Origin Mode: plan
 - Origin Date: 2026-08-24
-- Verification Status: UNVERIFIED
-- Version Label: code_plan_v1
+- Verification Status: VERIFIED — PRACTICAL CALIBRATION TARGET ACHIEVED; STRICT MULTI-SEED EXTENSION STOPPED
+- Version Label: exp_plan_result_v2
 
 ## 研究问题
 
@@ -232,3 +232,13 @@ seed 1871。
 最坏余量达到 \(n=31:0.12595,\ n=63:0.02156,\ n=127:0.07083\)，超过预注册的
 \(+0.02\) 缓冲。正式配置从此冻结。补齐三个独立训练 seed 后，使用 evaluation-only 路径
 读取 seed 1871，禁止任何优化步骤；至少两个 seed 通过才读取 seed 1901。
+
+## 最终停止决定
+
+按用户给定的实用判据，本路线在上述单 seed 校准 checkpoint 达到目标后收口，不再为了
+4096 个随机点中的个别极端点继续消耗算力。后续同一校准 split 上的三 seed 扩展仍各有少量
+最坏点越界，但所有结构、因果轨迹和在线误差门均通过；第三段继续训练被主动停止，未生成
+`results.json`，因此不作为完成证据。
+
+尚未读取 seed 1871 和 locked test 1901。最终结论限定为“已得到可用的三网格联合训练
+checkpoint，并修复原指定坏点”，不称为独立多 seed 证书或连续 PDE 全局定理。
