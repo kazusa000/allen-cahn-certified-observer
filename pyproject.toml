@@ -9,6 +9,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+design = [
+  "cvxpy>=1.6",
+]
 gpu = [
   "torch>=2.4",
 ]

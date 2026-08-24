@@ -8,6 +8,9 @@
 - Planned the R5 observation-injection repair: a five-sensor certified baseline, a two-sensor
   oblique modal injection feasibility gate, nonlinear/noise validation, and a training-only-after-
   feasibility compute policy.
+- Added a general causal output-injection observer, unstable-mode observability diagnostics,
+  pole-placement/Riccati/LMI modal designs, physical-gain and transient metrics, a five-sensor global
+  semidiscrete margin audit, and the paired nonlinear/noise CPU experiment entry point.
 
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
