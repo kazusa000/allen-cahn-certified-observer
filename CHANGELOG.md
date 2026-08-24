@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Completed the exact-commit RTX 2060 `nu=0.005` joint multigrid run. Joint
+  `B+T_phi` training reduced validation dynamics-defect RMS on grids 31, 63,
+  and 127, but every grid failed the frozen worst-contraction, 25%-RMS, and
+  online-no-regression gates; defect and worst margin also worsened with mesh
+  refinement, so the mesh-robust classification is false.
 - Froze a thesis-focused multigrid follow-up at `nu=0.005`: train only the native
   joint `B+T_phi` model independently on grids 31, 63, and 127, retain fixed LMI
   designs only as per-grid references, and compare validation dynamics and safety
