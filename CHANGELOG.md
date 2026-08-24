@@ -16,6 +16,10 @@
   LMI gain and metric from NumPy `eigh` modes to the fixed physical sine basis;
   added hard regressions that the lifted gain and contraction rate reproduce
   the original LMI design before any network-capacity conclusion is allowed.
+- Re-ran the corrected original-capacity pilot: one seed passed structure,
+  direct-dynamics collocation, trajectory, and online gates on grids 31, 63,
+  and 127. Cancelled the unnecessary capacity expansion and moved formal
+  validation from the consumed calibration seed 1801 to fresh seed 1851.
 - Froze the next fresh-split joint experiment around the LMI transform:
   `T_phi(u,e)=T0[e+g_tilde(u,e)-g_tilde(u,0)]`, retaining the full nonlinear
   target and exactly four losses while enforcing global invertibility in

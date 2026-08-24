@@ -54,7 +54,8 @@ FOUR_SENSOR_INTERVALS = np.column_stack(
     )
 )
 LMI_CONDITION_BOUNDS = (16.0, 32.0, 64.0, 128.0, 256.0)
-SPLIT_SEEDS = {"train": 1701, "validation": 1801, "test": 1901}
+CALIBRATION_SPLIT_SEED = 1801
+SPLIT_SEEDS = {"train": 1701, "validation": 1851, "test": 1901}
 
 
 @dataclass(frozen=True)
@@ -1165,6 +1166,7 @@ def run(
             "gain_learning_rate": gain_learning_rate,
             "transform_learning_rate": transform_learning_rate,
             "split_seeds": SPLIT_SEEDS,
+            "consumed_calibration_split_seed": CALIBRATION_SPLIT_SEED,
             "test_locked_until_two_seeds_pass": True,
         },
         "base_diagnostics": base_diagnostics,
