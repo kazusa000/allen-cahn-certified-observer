@@ -542,7 +542,8 @@ def _loss_components(
     ).squeeze(-1)
     error_squared = grid.h * torch.sum(errors**2, dim=1)
     defect_squared = grid.h * torch.sum((transformed_rhs - generator) ** 2, dim=1)
-    defect_loss = torch.mean(defect_squared / (error_squared + 1e-8))
+    defect_ratio_squared = defect_squared / (error_squared + 1e-8)
+    defect_loss = torch.mean(defect_ratio_squared)
 
     next_estimates = estimates + samples["dt"] * (rhs_estimate + correction)
     next_errors = next_estimates - next_states
@@ -583,6 +584,7 @@ def _loss_components(
         "total": total,
         "rates": rates,
         "requested": lam,
+        "defect_ratios": torch.sqrt(defect_ratio_squared),
     }
 
 

@@ -200,8 +200,21 @@ RMS 至少比 `joint-native` 低 10% 时才胜出；否则选择 `joint-native`�
   `out/<日期>-r5-three-sensor-dynamics-joint-2060-<提交>/`，不得覆盖旧输出。
 - 主结果为 JSON，至少记录代码提交、设备、配置、seed、损失分布、收缩分布、在线误差、
   test 是否解锁和每条冻结门的布尔值。
-- 正式命令在实现后固定到本文件；远端进程退出码非零、JSON 缺失/为空或出现非有限数均为
-  运行失败，不自动把部分输出当成结论。
+- 正式命令为：
+
+  ```bash
+  PYTHONPATH=src python tool/r5_three_sensor_dynamics_joint.py \
+    --grid-sizes 31 63 127 --seeds 501 502 503 \
+    --epochs 80 --batch-size 512 --refresh-interval 20 \
+    --device cuda --train-limit-per-nu 16 \
+    --validation-limit-per-nu 8 --test-limit-per-nu 8 \
+    --stress-truths-per-nu 2 \
+    --checkpoint-dir out/<新目录>/checkpoints \
+    --output out/<新目录>/results.json
+  ```
+
+- 远端进程退出码非零、JSON 缺失/为空或出现非有限数均为运行失败，不自动把部分输出当成
+  结论。
 
 ## 预期解释边界
 

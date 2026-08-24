@@ -2,10 +2,14 @@
 
 ## Unreleased
 
-- Froze the R5 three-sensor dynamics-joint experiment: six fixed/learned (B,T_\phi\)
+- Froze the R5 three-sensor dynamics-joint experiment: six fixed/learned `B`/`T_phi`
   ablations, research-plan stable and continuous-defect losses, an ODE-inspired
   input-direction ablation, validation-only selection, and explicit gates for the
-  incremental value of (T_\phi\) and joint training.
+  incremental value of `T_phi` and joint training.
+- Implemented the frozen six-row ablation, normalized defect-tail and direct-contraction
+  audits, Jacobian/zero-fiber checks, validation-only model selection, locked test/noise
+  evaluation, multi-grid expansion gates, checkpointing, and a dedicated command-line
+  entry point for exact-commit RTX 2060 execution.
 - 建立实验工程。
 # Changelog
 
