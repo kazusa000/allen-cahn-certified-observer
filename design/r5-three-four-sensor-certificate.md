@@ -5,7 +5,7 @@
 - Origin Skill: experiment-agent
 - Origin Mode: plan
 - Origin Date: 2026-08-24
-- Verification Status: UNVERIFIED
+- Verification Status: VERIFIED — FOUR-SENSOR GLOBAL CERTIFICATE; THREE-SENSOR LOCAL CERTIFICATE
 - Version Label: code_plan_v1
 
 ## Experiment Overview

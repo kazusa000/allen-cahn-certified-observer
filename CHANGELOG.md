@@ -28,6 +28,11 @@
   geometry selection on coarse-grid linear diagnostics, audits the three-sensor rank obstruction and
   transformed finite-trajectory contraction separately, selects the smallest qualifying four-sensor
   mass-adjoint gain, and unlocks test trajectories only after all validation gates pass.
+- Completed the deterministic three/four-sensor study and an exact independent reproduction. Four
+  interior sensors with total observation length 0.20 and mass-adjoint gain 0.50 passed all nine global
+  semidiscrete margin checks. Three sensors cannot pass that global rank gate at nu=0.005, but a general
+  modal injection passed every declared validation and locked-test transformed-contraction, online, and
+  noise gate without GPU training.
 
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
