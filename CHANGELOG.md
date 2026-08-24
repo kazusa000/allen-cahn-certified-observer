@@ -6,6 +6,9 @@
   checkpoints: decompose target defect and actual contraction power into `Pi_4`
   and `I-Pi_4` components, evaluate the projected-damping target counterfactually,
   and keep the locked test untouched.
+- Implemented the checkpoint frequency-audit entry point with exact formal-metric
+  replay, orthogonal defect/power additivity checks, per-case attribution,
+  projected-target counterfactuals, and pre-registered pooled decision rules.
 - Implemented the frozen nonlinear-target joint trainer at `nu=0.005`, three
   sensors, and `n=31`: a spectrally projected conditional residual transform,
   a hard-trust-region constant gain, the exact nonlinear Allen--Cahn target,

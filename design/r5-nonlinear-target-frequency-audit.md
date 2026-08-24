@@ -5,8 +5,8 @@
 - Origin Skill: academic-research-suite / experiment-agent
 - Origin Mode: validate
 - Origin Date: 2026-08-24
-- Verification Status: UNVERIFIED — FROZEN BEFORE IMPLEMENTATION
-- Version Label: audit_plan_v1
+- Verification Status: UNVERIFIED — FROZEN; IMPLEMENTED BUT NOT RUN
+- Version Label: audit_plan_v2
 
 ## 问题
 
