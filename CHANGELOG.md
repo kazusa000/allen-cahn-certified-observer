@@ -10,6 +10,11 @@
 - Reapplied the hard gain and transform projections after float64 validation
   conversion, preventing harmless float32-to-float64 singular-value drift from
   producing a false spectral-bound failure.
+- Completed the corrected exact-commit RTX 2060 three-seed formal run. All
+  structural invertibility checks and online-error gates passed, but all seeds
+  failed the error-nonlinearity, worst-contraction, and target-defect progress
+  gates; the locked test therefore remained unevaluated. Recorded the result and
+  the baseline-preconditioned nonlinear-transform follow-up hypothesis.
 - Drafted the next R5 joint-training plan at `nu=0.005`, three sensors, and
   `n=31`: replace the unjustified linear target with an analytically contractive
   nonlinear Allen--Cahn target, replace `P(u)e` with a spectrally bounded

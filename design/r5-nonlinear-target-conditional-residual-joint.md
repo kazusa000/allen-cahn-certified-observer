@@ -5,8 +5,8 @@
 - Origin Skill: academic-research-suite / experiment-agent
 - Origin Mode: plan
 - Origin Date: 2026-08-24
-- Verification Status: UNVERIFIED — FROZEN BY USER; IMPLEMENTATION IN PROGRESS
-- Version Label: code_plan_v2
+- Verification Status: VERIFIED — FORMAL RUN COMPLETE; VALIDATION FAILED
+- Version Label: executed_plan_v1
 
 ## 研究问题
 
@@ -440,14 +440,14 @@ m_\phi(u,e)
 | 产物 | 计划位置 | 成功条件 |
 |---|---|---|
 | 实现入口 | tool/r5_nonlinear_target_conditional_residual_joint.py | 参数冻结且拒绝覆盖输出 |
-| 网络与损失 | src/allen_cahn_observer/ | 单元测试覆盖链式法则、全局界和四项损失 |
+| 网络与损失 | src/allen_cahn_certified_observer/ | 单元测试覆盖链式法则、全局界和四项损失 |
 | 测试 | tests/ | 本地无 GPU 测试和 2060 完整测试通过 |
 | checkpoint | out/\<new\>/checkpoints/ | 三个 seed 各一个，包含 $B,T_\phi$ 和冻结配置 |
 | 正式结果 | out/\<new\>/results.json | validation、门、环境和精确 Git SHA 完整 |
 | 正式日志 | out/\<new\>/run.log | 无 traceback、NaN 或静默中断 |
 | 结果报告 | report/r5-nonlinear-target-conditional-residual-joint.md | 按冻结门逐项报告，不修改判据 |
 
-计划入口命令为（尚未实现，确认本计划后才创建）：
+正式入口命令为：
 
 ~~~bash
 PYTHONPATH=src:tool python tool/r5_nonlinear_target_conditional_residual_joint.py \
@@ -461,4 +461,7 @@ PYTHONPATH=src:tool python tool/r5_nonlinear_target_conditional_residual_joint.p
 
 ## 当前状态
 
-本文件只是待确认研究计划。当前未修改训练代码、未创建 checkpoint、未运行本地或远程实验。
+计划已按冻结配置执行。精确提交为
+`32cc1ab3612e1a24e8a5c659aa734d9d90781d06`；三个模型 seed 均完成，但成功门为 0/3，
+因此 locked test 未执行。正式结论见
+`report/r5-nonlinear-target-conditional-residual-joint-20260824.md`。
