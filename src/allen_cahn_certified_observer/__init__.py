@@ -13,6 +13,12 @@ from .linearization import (
     incremental_remainder,
     local_incremental_rhs,
 )
+from .local_certificate import (
+    LocalPartition,
+    partition_samples,
+    summarize_local_region,
+    transition_counts,
+)
 from .observations import local_average_matrix
 from .observer import (
     CausalNudging,
@@ -84,10 +90,14 @@ __all__ = [
     "lmi_modal_injection",
     "local_average_matrix",
     "local_incremental_rhs",
+    "LocalPartition",
     "low_frequency_projector",
     "mass_adjoint_injection",
     "mass_norm",
     "normalized_modal_transform",
+    "partition_samples",
+    "summarize_local_region",
+    "transition_counts",
     "noise_waveform",
     "pole_placement_modal_injection",
     "riccati_modal_injection",

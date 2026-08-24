@@ -91,3 +91,9 @@
 - Completed the RTX 2060 state-dependent-target screen; both nonlinear targets slightly improved
   online reconstruction but increased held-out dynamics defect, so the pre-registered expansion gates
   failed and the route stopped before multi-grid training.
+- Added the pre-registered R5 partitioned local-certificate definitions, strict worst-sample stability
+  margin, physical overlap neighborhoods, and trajectory-transition audit.
+- Added checkpoint replay tooling for per-region defect, contraction, invertibility, online-error,
+  physical-overlap, and trajectory-switching audits.
+- Completed the RTX 2060 audit on all 48 validation trajectories: no pre-registered region attained a
+  positive strict local margin, and the declared horizon contained no phase-dominated samples.
