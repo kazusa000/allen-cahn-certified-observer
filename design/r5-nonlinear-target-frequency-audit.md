@@ -5,8 +5,8 @@
 - Origin Skill: academic-research-suite / experiment-agent
 - Origin Mode: validate
 - Origin Date: 2026-08-24
-- Verification Status: UNVERIFIED — FROZEN; IMPLEMENTED BUT NOT RUN
-- Version Label: audit_plan_v2
+- Verification Status: VERIFIED — EXECUTED; LOW-FREQUENCY-DOMINANT FAILURE
+- Version Label: executed_audit_v1
 
 ## 问题
 
@@ -177,3 +177,11 @@ s_{M,H}=\frac{\sum b_H}{\sum(b_L+b_H)}.
 | 单元测试 | `tests/test_nonlinear_target_frequency_audit.py` |
 | 原始结果 | `out/<new>/frequency-audit.json` |
 | 结论报告 | `report/r5-nonlinear-target-frequency-audit-20260824.md` |
+
+## 当前状态
+
+审计已在精确提交 `6cfef8d389294b5c0e43853a9b9bfd715e9fdc1c` 上完成。三个 checkpoint
+的目标缺陷高频池化占比为 5.11%，收缩失败高频负裕量负担池化占比为 7.89%，两者均判为
+低频主导。投影阻尼反事实未达到 10% 改善门，因此不建议把
+$-(1+\lambda)\Pi_4z$ 作为下一轮主要修复。完整结论见
+`report/r5-nonlinear-target-frequency-audit-20260824.md`。

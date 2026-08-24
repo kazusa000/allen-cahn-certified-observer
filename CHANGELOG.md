@@ -9,6 +9,10 @@
 - Implemented the checkpoint frequency-audit entry point with exact formal-metric
   replay, orthogonal defect/power additivity checks, per-case attribution,
   projected-target counterfactuals, and pre-registered pooled decision rules.
+- Completed the exact-checkpoint RTX 2060 frequency audit. About 95% of learned
+  target-defect loss and 92% of failed-sample negative contraction-power burden
+  came from `Pi_4`; projected high-frequency damping improved counterfactual RMS
+  by only about 2.1%, so the audit rejected it as the primary next repair.
 - Implemented the frozen nonlinear-target joint trainer at `nu=0.005`, three
   sensors, and `n=31`: a spectrally projected conditional residual transform,
   a hard-trust-region constant gain, the exact nonlinear Allen--Cahn target,
