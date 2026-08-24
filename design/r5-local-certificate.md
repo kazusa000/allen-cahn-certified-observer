@@ -21,34 +21,26 @@ r_T=\partial_uT_\phi(u,e)\,\partial_tu
     -(A-\lambda I)z.
 \]
 
-每个样本记录归一化动力学缺陷和实际变换后收缩率
+每个样本直接记录以下归一化动力学缺陷和实际变换后收缩率
 
 \[
-d_T=\frac{\lVert r_T\rVert_{M_h}}{\lVert e\rVert_{M_h}},
+\frac{
+\left\lVert
+\partial_uT_\phi(u,e)\,\partial_tu
++\partial_eT_\phi(u,e)\,\partial_te
+-(A-\lambda I)T_\phi(u,e)
+\right\rVert_{M_h}}
+{\lVert e\rVert_{M_h}},
 \qquad
-q_T=-\frac{\langle z,\partial_tz\rangle_{M_h}}
-           {\lVert z\rVert_{M_h}^2}.
+-\frac{\langle z,\partial_tz\rangle_{M_h}}
+      {\lVert z\rVert_{M_h}^2}.
 \]
 
-在区域 \(R\) 上令
-
-\[
-\varepsilon_{T,h}(R)=\max_{(u,e)\in R}d_T,
-\qquad
-m_h(R)=\min_{(u,e)\in R}\sigma_{\min}(D_eT_\phi),
-\]
-
-而 \(\alpha_h(\nu)\) 是 \(A-\lambda I\) 的最慢衰减率。有限样本局部裕量定义为
-
-\[
-\beta_h^{\mathrm{stab}}(R)
-=\min_{(u,e)\in R}\alpha_h(\nu)
--\frac{\varepsilon_{T,h}(R)}{m_h(R)}.
-\]
-
-只有样本数不少于 30、全部数值有限、观测方向与零误差纤维约束通过且
-\(\beta_h^{\mathrm{stab}}(R)>0\) 时，该区域才记为有限样本通过。RMS 缺陷只作为
-诊断，不替代最坏样本判据。
+在每个区域中，取 \(A-\lambda I\) 的最慢衰减率、上式归一化缺陷的最大值，以及
+\(T_\phi\) 对 \(e\) 的 Jacobian 最小奇异值。用“最慢衰减率减去最大归一化缺陷除以
+最小奇异值”作为严格有限样本裕量。只有样本数不少于 30、全部数值有限、观测方向与
+零误差纤维约束通过且该裕量为正时，该区域才记为有限样本通过。RMS 缺陷只作为诊断，
+不替代最坏样本判据。
 
 ## Frozen physical partition
 
@@ -91,4 +83,3 @@ m_h(R)=\min_{(u,e)\in R}\sigma_{\min}(D_eT_\phi),
   扩大独立样本并做跨网格复核。
 - 若没有区域通过，则报告各区域失败来源；不得通过缩小区域到单个低缺陷样本或重新选择
   checkpoint 制造正结果。
-

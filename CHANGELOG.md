@@ -50,3 +50,5 @@
   margin, physical overlap neighborhoods, and trajectory-transition audit.
 - Added checkpoint replay tooling for per-region defect, contraction, invertibility, online-error,
   physical-overlap, and trajectory-switching audits.
+- Completed the RTX 2060 audit on all 48 validation trajectories: no pre-registered region attained a
+  positive strict local margin, and the declared horizon contained no phase-dominated samples.

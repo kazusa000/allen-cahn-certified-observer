@@ -172,16 +172,16 @@ def summarize_local_region(
         "defect_rms": float(np.sqrt(np.mean(defect**2))),
         "defect_median": float(np.median(defect)),
         "defect_p95": float(np.quantile(defect, 0.95)),
-        "epsilon_T_h": epsilon,
+        "maximum_normalized_defect": epsilon,
         "contraction_rate_min": float(np.min(contraction)),
         "contraction_rate_median": float(np.median(contraction)),
         "positive_contraction_fraction": float(np.mean(contraction > 0.0)),
-        "m_h": minimum_singular,
+        "minimum_jacobian_singular_value": minimum_singular,
         "jacobian_max_singular_value": float(
             np.max(picked["max_singular_value"])
         ),
-        "alpha_h_min": alpha,
-        "beta_h_stab": float(margin),
+        "minimum_target_decay": alpha,
+        "certified_decay_margin": float(margin),
         "online_error_rms": float(np.sqrt(np.mean(picked["online_error"] ** 2))),
         "baseline_error_rms": float(
             np.sqrt(np.mean(picked["baseline_error"] ** 2))
@@ -212,4 +212,3 @@ def transition_counts(trajectory_ids: Array, labels: Array) -> dict[str, object]
             pairs[key] = pairs.get(key, 0) + 1
             total += 1
     return {"total": total, "by_pair": dict(sorted(pairs.items()))}
-

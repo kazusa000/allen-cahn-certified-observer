@@ -57,9 +57,9 @@ def test_local_margin_uses_worst_defect_and_minimum_singular_value() -> None:
         minimum_samples=2,
     )
 
-    assert result["epsilon_T_h"] == pytest.approx(0.2)
-    assert result["m_h"] == pytest.approx(0.5)
-    assert result["beta_h_stab"] == pytest.approx(0.1)
+    assert result["maximum_normalized_defect"] == pytest.approx(0.2)
+    assert result["minimum_jacobian_singular_value"] == pytest.approx(0.5)
+    assert result["certified_decay_margin"] == pytest.approx(0.1)
     assert result["passed"]
 
 
@@ -79,7 +79,7 @@ def test_local_margin_fails_when_only_rms_would_pass() -> None:
     )
 
     assert result["defect_rms"] < 0.53
-    assert result["beta_h_stab"] < 0.0
+    assert result["certified_decay_margin"] < 0.0
     assert not result["passed"]
 
 
