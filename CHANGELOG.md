@@ -5,6 +5,10 @@
 - 建立实验工程。
 # Changelog
 
+- Planned the R5 observation-injection repair: a five-sensor certified baseline, a two-sensor
+  oblique modal injection feasibility gate, nonlinear/noise validation, and a training-only-after-
+  feasibility compute policy.
+
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
 - Completed the RTX 2060 direct-contraction screen: the selected weight-10 model improved the worst
