@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Froze and implemented the direct error-fiber multigrid route at `nu=0.005`:
+  one physical four-mode gain and one low-mode conditional invertible transform
+  are shared by grids 31, 63, and 127; the trainer differentiates the actual
+  Allen--Cahn error dynamics, removes the structurally incompatible full-target
+  defect from the objective, enforces invertibility by hard spectral projection,
+  and keeps locked-test, gain-only, fixed-LMI, and four-sensor controls separate.
 - Froze the next fresh-split joint experiment around the LMI transform:
   `T_phi(u,e)=T0[e+g_tilde(u,e)-g_tilde(u,0)]`, retaining the full nonlinear
   target and exactly four losses while enforcing global invertibility in

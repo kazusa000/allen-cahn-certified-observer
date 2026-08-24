@@ -7,6 +7,15 @@ from .certificate import (
     audit_certificate,
 )
 from .dataset import PilotCase, generate_pilot_cases, noise_waveform
+from .direct_fiber import (
+    build_low_modal_conditional_residual_transform,
+    mesh_shared_fiber_transform,
+    modal_residual_jacobian_bounds,
+    modal_residual_path_layer_bound,
+    physical_modal_coordinates,
+    physical_modal_injection,
+    reconstruct_physical_modes,
+)
 from .grid import AllenCahnGrid
 from .linearization import (
     allen_cahn_jacobian,
@@ -91,6 +100,7 @@ __all__ = [
     "audit_certificate",
     "audit_high_frequency_tail",
     "build_conditional_residual_transform",
+    "build_low_modal_conditional_residual_transform",
     "build_preconditioned_conditional_residual_transform",
     "build_projected_constant_gain",
     "dirichlet_laplacian_rates",
@@ -107,10 +117,15 @@ __all__ = [
     "low_frequency_projector",
     "mass_adjoint_injection",
     "mass_norm",
+    "mesh_shared_fiber_transform",
+    "modal_residual_jacobian_bounds",
+    "modal_residual_path_layer_bound",
     "nonlinear_target_rhs",
     "nonlinear_target_tensor",
     "normalized_modal_transform",
     "partition_samples",
+    "physical_modal_coordinates",
+    "physical_modal_injection",
     "summarize_local_region",
     "transition_counts",
     "noise_waveform",
@@ -118,6 +133,7 @@ __all__ = [
     "riccati_modal_injection",
     "residual_jacobian_bounds",
     "residual_path_layer_bound",
+    "reconstruct_physical_modes",
     "sampled_forced_tail_envelope",
     "simulate_causal_nudging",
     "simulate_learned_correction",
