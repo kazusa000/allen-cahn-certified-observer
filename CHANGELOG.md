@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented the frozen nonlinear-target joint trainer at `nu=0.005`, three
+  sensors, and `n=31`: a spectrally projected conditional residual transform,
+  a hard-trust-region constant gain, the exact nonlinear Allen--Cahn target,
+  full-chain-rule dynamics, exactly four normalized losses, fresh split seeds,
+  validation gates, locked test evaluation, and per-seed checkpoints.
 - Drafted the next R5 joint-training plan at `nu=0.005`, three sensors, and
   `n=31`: replace the unjustified linear target with an analytically contractive
   nonlinear Allen--Cahn target, replace `P(u)e` with a spectrally bounded

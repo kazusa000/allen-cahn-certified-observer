@@ -5,8 +5,8 @@
 - Origin Skill: academic-research-suite / experiment-agent
 - Origin Mode: plan
 - Origin Date: 2026-08-24
-- Verification Status: UNVERIFIED — DRAFT FOR APPROVAL; NOT IMPLEMENTED
-- Version Label: code_plan_v1
+- Verification Status: UNVERIFIED — FROZEN BY USER; IMPLEMENTATION IN PROGRESS
+- Version Label: code_plan_v2
 
 ## 研究问题
 

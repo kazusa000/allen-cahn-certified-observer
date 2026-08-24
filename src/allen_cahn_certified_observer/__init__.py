@@ -19,6 +19,15 @@ from .local_certificate import (
     summarize_local_region,
     transition_counts,
 )
+from .nonlinear_target import (
+    build_conditional_residual_transform,
+    build_projected_constant_gain,
+    nonlinear_target_rhs,
+    nonlinear_target_tensor,
+    residual_jacobian_bounds,
+    residual_path_layer_bound,
+    spectral_product,
+)
 from .observations import local_average_matrix
 from .observer import (
     CausalNudging,
@@ -80,6 +89,8 @@ __all__ = [
     "allen_cahn_rhs",
     "audit_certificate",
     "audit_high_frequency_tail",
+    "build_conditional_residual_transform",
+    "build_projected_constant_gain",
     "dirichlet_laplacian_rates",
     "dirichlet_sine_basis",
     "fit_state_conditioned_linear_correction",
@@ -94,6 +105,8 @@ __all__ = [
     "low_frequency_projector",
     "mass_adjoint_injection",
     "mass_norm",
+    "nonlinear_target_rhs",
+    "nonlinear_target_tensor",
     "normalized_modal_transform",
     "partition_samples",
     "summarize_local_region",
@@ -101,11 +114,14 @@ __all__ = [
     "noise_waveform",
     "pole_placement_modal_injection",
     "riccati_modal_injection",
+    "residual_jacobian_bounds",
+    "residual_path_layer_bound",
     "sampled_forced_tail_envelope",
     "simulate_causal_nudging",
     "simulate_learned_correction",
     "solve_allen_cahn",
     "split_low_tail",
+    "spectral_product",
     "symmetric_allen_cahn_margin",
     "unstable_modal_system",
 ]
