@@ -297,6 +297,9 @@ def main() -> None:
 
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise SystemExit("CUDA requested but torch.cuda.is_available() is false")
+    if args.device.startswith("cuda"):
+        torch.cuda.set_device(0)
+        torch.empty(1, device=args.device)
     result = run(
         torch,
         seeds=args.seeds,
