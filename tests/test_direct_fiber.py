@@ -57,6 +57,17 @@ def test_buffered_cvar_keeps_pressure_after_zero_margin() -> None:
     assert loss.item() == pytest.approx((0.03**2 + 0.02**2) / 2.0)
 
 
+def test_buffered_cvar_can_focus_the_single_worst_point() -> None:
+    torch = pytest.importorskip("torch")
+    margins = torch.tensor([-0.02, 0.01, 0.03, 0.05], dtype=torch.float64)
+
+    loss = buffered_contraction_cvar(
+        torch, margins, buffer=0.04, tail_fraction=0.01
+    )
+
+    assert loss.item() == pytest.approx(0.06**2)
+
+
 def test_modal_adversary_projection_obeys_frozen_domain() -> None:
     torch = pytest.importorskip("torch")
     grid = AllenCahnGrid(31)

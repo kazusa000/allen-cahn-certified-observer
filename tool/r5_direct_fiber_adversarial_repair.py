@@ -539,6 +539,7 @@ def _train_seed(
     replay_count: int,
     hard_replay_count: int,
     contraction_buffer: float,
+    contraction_tail_fraction: float,
     adversary_refresh_epochs: int,
     adversary_restarts: int,
     adversary_keep: int,
@@ -782,7 +783,7 @@ def _train_seed(
                 torch,
                 components["margins"],
                 buffer=contraction_buffer,
-                tail_fraction=0.1,
+                tail_fraction=contraction_tail_fraction,
             )
             online = _online_loss(
                 torch, gain, train_truth, trajectory_indices, contexts[31]
@@ -942,6 +943,7 @@ def run(
     validation_count: int,
     test_count: int,
     contraction_buffer: float,
+    contraction_tail_fraction: float,
     adversary_refresh_epochs: int,
     adversary_restarts: int,
     adversary_keep: int,
@@ -1020,6 +1022,7 @@ def run(
             replay_count=replay_count,
             hard_replay_count=hard_replay_count,
             contraction_buffer=contraction_buffer,
+            contraction_tail_fraction=contraction_tail_fraction,
             adversary_refresh_epochs=adversary_refresh_epochs,
             adversary_restarts=adversary_restarts,
             adversary_keep=adversary_keep,
@@ -1130,6 +1133,7 @@ def run(
             "calibration_hard_replay_source_count": 4096,
             "resample_seed_base": RESAMPLE_SEED_BASE,
             "contraction_buffer": contraction_buffer,
+            "contraction_tail_fraction": contraction_tail_fraction,
             "adversary_grids": list(GRID_SIZES),
             "adversary_refresh_epochs": adversary_refresh_epochs,
             "adversary_restarts": adversary_restarts,
@@ -1193,6 +1197,7 @@ def main() -> None:
     parser.add_argument("--validation-count", type=int, default=4096)
     parser.add_argument("--test-count", type=int, default=8192)
     parser.add_argument("--contraction-buffer", type=float, default=0.04)
+    parser.add_argument("--contraction-tail-fraction", type=float, default=0.1)
     parser.add_argument("--adversary-refresh-epochs", type=int, default=2)
     parser.add_argument("--adversary-restarts", type=int, default=128)
     parser.add_argument("--adversary-keep", type=int, default=32)
@@ -1266,6 +1271,8 @@ def main() -> None:
         raise SystemExit("--adversary-keep cannot exceed --adversary-restarts")
     if args.contraction_buffer <= 0.0 or args.adversary_step_size <= 0.0:
         raise SystemExit("buffer and adversarial step size must be positive")
+    if not 0.0 < args.contraction_tail_fraction <= 1.0:
+        raise SystemExit("--contraction-tail-fraction must lie in (0, 1]")
     positive_weights = (
         args.robust_multiplier_start,
         args.robust_multiplier_end,
@@ -1308,6 +1315,7 @@ def main() -> None:
         validation_count=args.validation_count,
         test_count=args.test_count,
         contraction_buffer=args.contraction_buffer,
+        contraction_tail_fraction=args.contraction_tail_fraction,
         adversary_refresh_epochs=args.adversary_refresh_epochs,
         adversary_restarts=args.adversary_restarts,
         adversary_keep=args.adversary_keep,

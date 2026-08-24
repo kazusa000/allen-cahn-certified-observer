@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made the buffered-contraction CVaR tail fraction explicit and froze the final
+  one-bad-point calibration at 1%, after the 10% tail diluted the only remaining
+  grid-63 violation across roughly 26 samples per batch.
 - Froze and implemented the direct error-fiber multigrid route at `nu=0.005`:
   one physical four-mode gain and one low-mode conditional invertible transform
   are shared by grids 31, 63, and 127; the trainer differentiates the actual
