@@ -4,7 +4,7 @@
 
 - ID：R5-direct-contraction-2026-08-24
 - 类型：Code Experiment Plan
-- 状态：IN PROGRESS
+- 状态：COMPLETED — NO POSITIVE VALIDATION MARGIN
 - 前序结果：`report/r5-dynamics-defect-repair.md`
 
 ## 研究问题
@@ -62,3 +62,6 @@ checkpoint，不重新训练。分别审计固定增益训练轨迹、当前观�
 终点误差和可逆性审计。只有无噪声当前观测器独立验证的有限样本最小值为正，才能声称在
 声明轨迹上得到正的局部稳定裕量；若连直接训练仍失败，则保留违反收缩条件的状态区域与
 误差尺度，作为该路线的正式负结果。
+
+本方案已执行完毕。现有 checkpoint 与三档直接收缩训练都未使无噪声当前观测器独立验证的
+有限样本最小值变为正，正式结果见 `report/r5-direct-contraction.md`。

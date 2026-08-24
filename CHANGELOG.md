@@ -7,6 +7,9 @@
 
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
+- Completed the RTX 2060 direct-contraction screen: the selected weight-10 model improved the worst
+  validation rate from -0.4810 to -0.4043 while preserving invertibility and online error, but did not
+  obtain a positive finite-sample validation margin.
 
 ## Unreleased
 
