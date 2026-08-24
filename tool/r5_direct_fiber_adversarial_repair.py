@@ -447,6 +447,22 @@ def _load_initialized_model(
     }
 
 
+def _checkpoint_for_seed(directory: Path, seed: int) -> Path:
+    """Resolve either an original formal or a prior repair checkpoint."""
+
+    candidates = (
+        directory / f"direct-fiber__seed-{seed}.pt",
+        directory / f"direct-fiber-adversarial__seed-{seed}.pt",
+    )
+    existing = [path for path in candidates if path.is_file()]
+    if len(existing) != 1:
+        raise FileNotFoundError(
+            f"expected exactly one checkpoint for seed {seed} in {directory}, "
+            f"found {len(existing)}"
+        )
+    return existing[0]
+
+
 def _train_seed(
     torch: object,
     base_gain: np.ndarray,
@@ -925,11 +941,7 @@ def run(
     seed_results = []
     for seed_value in seeds:
         seed = int(seed_value)
-        initial_checkpoint = (
-            initial_checkpoint_dir / f"direct-fiber__seed-{seed}.pt"
-        )
-        if not initial_checkpoint.is_file():
-            raise FileNotFoundError(f"missing initial checkpoint: {initial_checkpoint}")
+        initial_checkpoint = _checkpoint_for_seed(initial_checkpoint_dir, seed)
         gain, transform, result = _train_seed(
             torch,
             base_gain,

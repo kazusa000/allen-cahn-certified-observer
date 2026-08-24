@@ -22,6 +22,7 @@ from r5_direct_fiber_multigrid_joint import (
 from r5_direct_fiber_adversarial_repair import (
     _adversarial_low_mode_samples,
     _append_adversary_memory,
+    _checkpoint_for_seed,
     _hard_point_neighborhood,
     _seed_for_epoch,
 )
@@ -125,6 +126,19 @@ def test_adversary_memory_accumulates_before_deterministic_truncation() -> None:
 
     assert accumulated["states"][:, 0].tolist() == [2.0, 3.0, 4.0]
     assert accumulated["errors"][:, 0].tolist() == [20.0, 30.0, 40.0]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["direct-fiber__seed-1303.pt", "direct-fiber-adversarial__seed-1303.pt"],
+)
+def test_checkpoint_resolver_accepts_original_or_repair(
+    tmp_path: Path, name: str
+) -> None:
+    checkpoint = tmp_path / name
+    checkpoint.touch()
+
+    assert _checkpoint_for_seed(tmp_path, 1303) == checkpoint
 
 
 def test_low_mode_adversarial_search_is_differentiable_and_projected() -> None:

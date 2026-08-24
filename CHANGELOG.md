@@ -115,6 +115,8 @@
 - Enabled the condition branch only after the frozen-condition active-set
   plateau demonstrated that a single near-state-independent error geometry was
   insufficient.
+- Allowed repair checkpoints to seed a monotone follow-up capacity stage after
+  the conditional model saturated its rho budget while leaving gain headroom.
 - Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
   locked-test policy unchanged.
 
