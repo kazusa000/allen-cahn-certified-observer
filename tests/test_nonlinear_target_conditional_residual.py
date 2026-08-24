@@ -136,6 +136,20 @@ def test_projected_constant_gain_respects_hard_trust_region() -> None:
     assert tuple(gain(4).shape) == (4, 7, 3)
 
 
+def test_spectral_projection_is_reapplied_after_precision_conversion() -> None:
+    torch = pytest.importorskip("torch")
+    model = build_conditional_residual_transform(
+        torch, 7, hidden_width=16, hidden_layers=3, rho=0.5
+    )
+    with torch.no_grad():
+        for weight in model.spectral_weights():
+            weight.mul_(1.0001)
+    model = model.to(dtype=torch.float64)
+    model.project_spectral_()
+
+    assert 2.0 * model.residual_lipschitz_bound() <= 0.5 + 1.0e-10
+
+
 def test_four_term_objective_backpropagates_to_transform_and_gain() -> None:
     torch = pytest.importorskip("torch")
     torch.manual_seed(21)

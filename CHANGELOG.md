@@ -7,6 +7,9 @@
   a hard-trust-region constant gain, the exact nonlinear Allen--Cahn target,
   full-chain-rule dynamics, exactly four normalized losses, fresh split seeds,
   validation gates, locked test evaluation, and per-seed checkpoints.
+- Reapplied the hard gain and transform projections after float64 validation
+  conversion, preventing harmless float32-to-float64 singular-value drift from
+  producing a false spectral-bound failure.
 - Drafted the next R5 joint-training plan at `nu=0.005`, three sensors, and
   `n=31`: replace the unjustified linear target with an analytically contractive
   nonlinear Allen--Cahn target, replace `P(u)e` with a spectrally bounded

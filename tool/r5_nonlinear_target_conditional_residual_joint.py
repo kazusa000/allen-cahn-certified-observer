@@ -1081,6 +1081,8 @@ def _train_seed(
 
     gain = gain.to(dtype=torch.float64)
     transform = transform.to(dtype=torch.float64)
+    gain.project_()
+    transform.project_spectral_()
     current_gain = gain().detach().cpu().numpy()
     validation_samples, validation_rollout = _simulate_cases(
         grid, matrix, current_gain, validation_cases
