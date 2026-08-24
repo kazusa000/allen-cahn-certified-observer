@@ -17,7 +17,11 @@ from r5_tk_joint_train import (
     _signed_summary,
 )
 
-from allen_cahn_certified_observer import AllenCahnGrid, local_average_matrix
+from allen_cahn_certified_observer import (
+    AllenCahnGrid,
+    local_average_matrix,
+    low_frequency_projector,
+)
 
 
 def _sample_set(nu: float, time: float) -> JointSampleSet:
@@ -255,3 +259,44 @@ def test_constant_mass_adjoint_gain_keeps_positive_sensor_injection_structure() 
     assert torch.all(ratios > 0.5)
     assert torch.all(ratios < 1.5)
     assert torch.allclose(learned[0], learned[-1])
+
+
+def test_low_frequency_models_preserve_tail_and_project_gain() -> None:
+    torch = pytest.importorskip("torch")
+    grid = AllenCahnGrid(31)
+    matrix = local_average_matrix(grid, INTERVALS)
+    gain, certificate = _build_models(
+        torch,
+        grid,
+        matrix,
+        base_gain=0.02,
+        gain_scale=0.5,
+        certificate_scale=1.0,
+        lower_lipschitz=0.5,
+        upper_lipschitz=2.0,
+        certificate_kind="givens",
+        mixing_layers=2,
+        low_modes=8,
+    )
+    torch.nn.init.normal_(gain.network[-1].weight, std=0.1)
+    torch.nn.init.normal_(certificate.network[-1].weight, std=0.1)
+    generator = torch.Generator().manual_seed(45)
+    features = torch.randn((4, grid.n + 2 * matrix.shape[0] + 2), generator=generator)
+    states = torch.randn((4, grid.n), generator=generator)
+    errors = torch.randn((4, grid.n), generator=generator)
+    projector = torch.as_tensor(low_frequency_projector(grid, 8), dtype=torch.float32)
+    tail_projector = torch.eye(grid.n) - projector
+
+    gains = gain(features)
+    transformed = certificate(states, errors)
+
+    assert torch.max(torch.abs(torch.matmul(tail_projector, gains))).item() < 1.0e-5
+    assert torch.max(torch.abs((transformed - errors) @ tail_projector)).item() < 1.0e-5
+    assert (
+        torch.max(
+            torch.abs(
+                (transformed - errors) @ torch.as_tensor(matrix.T, dtype=torch.float32)
+            )
+        ).item()
+        < 1.0e-5
+    )
