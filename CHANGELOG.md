@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Froze the next fresh-split joint experiment around the LMI transform:
+  `T_phi(u,e)=T0[e+g_tilde(u,e)-g_tilde(u,0)]`, retaining the full nonlinear
+  target and exactly four losses while enforcing global invertibility in
+  `T0`-normalized coordinates.
 - Froze a validation-only four-mode frequency audit for the three nonlinear-target
   checkpoints: decompose target defect and actual contraction power into `Pi_4`
   and `I-Pi_4` components, evaluate the projected-damping target counterfactually,
