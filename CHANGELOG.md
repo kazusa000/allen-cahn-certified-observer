@@ -24,6 +24,10 @@
   validation. The original two sensors were linearly stabilizable with a general output injection, but
   every trained configuration failed both the positive-worst-contraction and nu=0.005 online-
   no-regression gates, so multi-grid expansion and test evaluation remained locked.
+- Added a fixed-total-observation-length comparison for three and four sensors. The experiment freezes
+  geometry selection on coarse-grid linear diagnostics, audits the three-sensor rank obstruction and
+  transformed finite-trajectory contraction separately, selects the smallest qualifying four-sensor
+  mass-adjoint gain, and unlocks test trajectories only after all validation gates pass.
 
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
