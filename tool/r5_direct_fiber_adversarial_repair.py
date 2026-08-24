@@ -520,6 +520,63 @@ def _checkpoint_for_seed(directory: Path, seed: int) -> Path:
     return existing[0]
 
 
+def _evaluate_checkpoint_seed(
+    torch: object,
+    base_gain: np.ndarray,
+    base_transform: np.ndarray,
+    validation_samples: dict[int, dict[str, np.ndarray]],
+    validation_cases: dict[int, list[object]],
+    validation_baseline: dict[str, object],
+    *,
+    checkpoint: Path,
+    seed: int,
+    rho: float,
+    hidden_width: int,
+    hidden_layers: int,
+    gain_trust_ratio: float,
+    error_scale: float,
+    device: str,
+) -> tuple[object, object, dict[str, object]]:
+    """Evaluate a frozen checkpoint without taking an optimization step."""
+
+    gain, transform, initialization = _load_initialized_model(
+        torch,
+        checkpoint=checkpoint,
+        base_gain=base_gain,
+        base_transform=base_transform,
+        seed=seed,
+        rho=rho,
+        hidden_width=hidden_width,
+        hidden_layers=hidden_layers,
+        gain_trust_ratio=gain_trust_ratio,
+        error_scale=error_scale,
+        device=device,
+    )
+    gain = gain.to(dtype=torch.float64)
+    transform = transform.to(dtype=torch.float64)
+    validation = _evaluate_split(
+        torch,
+        transform,
+        gain,
+        base_transform,
+        validation_samples,
+        validation_cases,
+        validation_baseline,
+        device=device,
+    )
+    structure = _structure_audit(torch, transform, device=device, seed=seed + 10_000)
+    return gain, transform, {
+        "seed": seed,
+        "initialization": initialization,
+        "evaluation_only": True,
+        "gain_relative_delta_norm": gain.relative_delta_norm(),
+        "structure": structure,
+        "validation": validation,
+        "gates": _validation_gates(validation, structure),
+        "checkpoint": str(checkpoint),
+    }
+
+
 def _train_seed(
     torch: object,
     base_gain: np.ndarray,
@@ -909,6 +966,7 @@ def _train_seed(
             "gain_trust_ratio": gain_trust_ratio,
             "error_scale": error_scale,
             "contraction_buffer": contraction_buffer,
+            "contraction_tail_fraction": contraction_tail_fraction,
             "replay_count": replay_count,
             "hard_replay_count": hard_replay_count,
             "adversary_memory_limit": adversary_memory_limit,
@@ -933,6 +991,7 @@ def run(
     initial_checkpoint_dir: Path,
     validation_seed: int,
     allow_locked_test: bool,
+    evaluation_only: bool,
     epochs: int,
     steps_per_epoch: int,
     batch_size: int,
@@ -1004,47 +1063,65 @@ def run(
     for seed_value in seeds:
         seed = int(seed_value)
         initial_checkpoint = _checkpoint_for_seed(initial_checkpoint_dir, seed)
-        gain, transform, result = _train_seed(
-            torch,
-            base_gain,
-            base_transform,
-            validation_samples,
-            validation_cases,
-            validation_baseline,
-            train_truth,
-            initial_checkpoint=initial_checkpoint,
-            seed=seed,
-            epochs=epochs,
-            steps_per_epoch=steps_per_epoch,
-            batch_size=batch_size,
-            rollout_batch_size=rollout_batch_size,
-            resample_count=resample_count,
-            replay_count=replay_count,
-            hard_replay_count=hard_replay_count,
-            contraction_buffer=contraction_buffer,
-            contraction_tail_fraction=contraction_tail_fraction,
-            adversary_refresh_epochs=adversary_refresh_epochs,
-            adversary_restarts=adversary_restarts,
-            adversary_keep=adversary_keep,
-            adversary_steps=adversary_steps,
-            adversary_step_size=adversary_step_size,
-            adversary_memory_limit=adversary_memory_limit,
-            rho=rho,
-            hidden_width=hidden_width,
-            hidden_layers=hidden_layers,
-            gain_trust_ratio=gain_trust_ratio,
-            gain_learning_rate=gain_learning_rate,
-            transform_learning_rate=transform_learning_rate,
-            robust_multiplier_start=robust_multiplier_start,
-            robust_multiplier_end=robust_multiplier_end,
-            online_weight=online_weight,
-            transform_teacher_weight=transform_teacher_weight,
-            gain_teacher_weight=gain_teacher_weight,
-            train_condition_branch=train_condition_branch,
-            error_scale=error_scale,
-            device=device,
-            checkpoint_dir=checkpoint_dir,
-        )
+        if evaluation_only:
+            gain, transform, result = _evaluate_checkpoint_seed(
+                torch,
+                base_gain,
+                base_transform,
+                validation_samples,
+                validation_cases,
+                validation_baseline,
+                checkpoint=initial_checkpoint,
+                seed=seed,
+                rho=rho,
+                hidden_width=hidden_width,
+                hidden_layers=hidden_layers,
+                gain_trust_ratio=gain_trust_ratio,
+                error_scale=error_scale,
+                device=device,
+            )
+        else:
+            gain, transform, result = _train_seed(
+                torch,
+                base_gain,
+                base_transform,
+                validation_samples,
+                validation_cases,
+                validation_baseline,
+                train_truth,
+                initial_checkpoint=initial_checkpoint,
+                seed=seed,
+                epochs=epochs,
+                steps_per_epoch=steps_per_epoch,
+                batch_size=batch_size,
+                rollout_batch_size=rollout_batch_size,
+                resample_count=resample_count,
+                replay_count=replay_count,
+                hard_replay_count=hard_replay_count,
+                contraction_buffer=contraction_buffer,
+                contraction_tail_fraction=contraction_tail_fraction,
+                adversary_refresh_epochs=adversary_refresh_epochs,
+                adversary_restarts=adversary_restarts,
+                adversary_keep=adversary_keep,
+                adversary_steps=adversary_steps,
+                adversary_step_size=adversary_step_size,
+                adversary_memory_limit=adversary_memory_limit,
+                rho=rho,
+                hidden_width=hidden_width,
+                hidden_layers=hidden_layers,
+                gain_trust_ratio=gain_trust_ratio,
+                gain_learning_rate=gain_learning_rate,
+                transform_learning_rate=transform_learning_rate,
+                robust_multiplier_start=robust_multiplier_start,
+                robust_multiplier_end=robust_multiplier_end,
+                online_weight=online_weight,
+                transform_teacher_weight=transform_teacher_weight,
+                gain_teacher_weight=gain_teacher_weight,
+                train_condition_branch=train_condition_branch,
+                error_scale=error_scale,
+                device=device,
+                checkpoint_dir=checkpoint_dir,
+            )
         models[seed] = (gain, transform)
         seed_results.append(result)
 
@@ -1161,6 +1238,7 @@ def run(
             "locked_test_seed": LOCKED_TEST_SEED,
             "test_count_per_grid": test_count,
             "allow_locked_test": allow_locked_test,
+            "evaluation_only": evaluation_only,
             "test_locked_until_two_seeds_pass": True,
             "calibration_bad_point_neighborhood_used_for_training": True,
         },
@@ -1187,6 +1265,7 @@ def main() -> None:
     parser.add_argument("--initial-checkpoint-dir", type=Path, required=True)
     parser.add_argument("--validation-seed", type=int, default=FORMAL_VALIDATION_SEED)
     parser.add_argument("--allow-locked-test", action="store_true")
+    parser.add_argument("--evaluation-only", action="store_true")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--steps-per-epoch", type=int, default=24)
     parser.add_argument("--batch-size", type=int, default=256)
@@ -1239,7 +1318,6 @@ def main() -> None:
             f"missing initial checkpoint directory: {args.initial_checkpoint_dir}"
         )
     positive_counts = (
-        args.epochs,
         args.steps_per_epoch,
         args.batch_size,
         args.rollout_batch_size,
@@ -1256,6 +1334,10 @@ def main() -> None:
     )
     if min(positive_counts) < 1:
         raise SystemExit("counts must be positive")
+    if args.evaluation_only and args.epochs != 0:
+        raise SystemExit("--evaluation-only requires --epochs 0")
+    if not args.evaluation_only and args.epochs < 1:
+        raise SystemExit("training requires --epochs at least 1")
     if min(
         args.resample_count,
         args.replay_count,
@@ -1305,6 +1387,7 @@ def main() -> None:
         initial_checkpoint_dir=args.initial_checkpoint_dir,
         validation_seed=args.validation_seed,
         allow_locked_test=args.allow_locked_test,
+        evaluation_only=args.evaluation_only,
         epochs=args.epochs,
         steps_per_epoch=args.steps_per_epoch,
         batch_size=args.batch_size,

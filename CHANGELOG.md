@@ -8,6 +8,9 @@
 - Recorded the max-loss calibration diagnosis and froze one final transform-only
   capacity adjustment from `rho=0.8` to `rho=0.9`; the gain trust region remains
   unchanged and the normalized Jacobian keeps a strict positive lower bound.
+- Added an evaluation-only checkpoint path so fresh validation and locked test
+  cannot silently take an optimization step after the final configuration is
+  frozen.
 - Froze and implemented the direct error-fiber multigrid route at `nu=0.005`:
   one physical four-mode gain and one low-mode conditional invertible transform
   are shared by grids 31, 63, and 127; the trainer differentiates the actual
