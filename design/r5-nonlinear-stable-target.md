@@ -4,7 +4,7 @@
 
 - ID：R5-nonlinear-stable-target-2026-08-24
 - 类型：Code Experiment Plan
-- 状态：IN PROGRESS
+- 状态：COMPLETED — PROGRESS GATE FAILED
 - 前序结果：`report/r5-dynamics-defect-repair.md`
 
 ## 研究问题
@@ -91,3 +91,10 @@ Allen--Cahn 非线性增量，而不是 $T_\phi$ 和 $B$ 的容量不足。
 
 局部稳定结论还要求每个 Allen--Cahn 参数组的验证 RMS 小于由目标衰减和 Jacobian 下界给出
 的保守门槛。若第一阶段没有通过进展门槛，则保留负结果，不用扩大训练规模掩盖失败。
+
+## 执行结果
+
+正式筛选已在 RTX 2060 上完成。保留 $DF(u)$ 和保留完整非线性增量的目标均通过可逆性与
+在线误差约束，但验证动力学缺陷分别比同轮线性目标增加 14.5% 和 15.8%，相对与绝对进展
+门槛均失败。因此按预注册规则停止在 `n=31`，不进入多网格扩展。完整结果见
+`report/r5-nonlinear-stable-target.md`。
