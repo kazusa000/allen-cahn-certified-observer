@@ -17,6 +17,8 @@
   stress cases, and validation-only model selection before test/noise evaluation.
 - Froze a three-configuration validation-only GPU screen so gain-only, balanced-joint, and flexible-
   joint residuals can be selected without test leakage before any multi-grid expansion.
+- Regularized the zero-initialized gain-residual norm and added a pre-update finite-gradient gate after
+  the first remote smoke exposed an undefined zero-norm derivative.
 
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.

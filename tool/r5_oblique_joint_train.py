@@ -242,7 +242,7 @@ def _build_models(
             modal_delta = torch.tanh(raw)
             delta = torch.einsum("nm,bmq->bnq", self.mode_basis, modal_delta)
             delta_norm = torch.sqrt(
-                grid.h * torch.sum(delta**2, dim=(1, 2), keepdim=True)
+                grid.h * torch.sum(delta**2, dim=(1, 2), keepdim=True) + 1.0e-12
             )
             base_norm = torch.sqrt(
                 grid.h * torch.sum(base**2, dim=(1, 2), keepdim=True)
@@ -679,6 +679,13 @@ def _train_seed(
             if not torch.isfinite(components["total"]):
                 raise RuntimeError("non-finite joint loss")
             components["total"].backward()
+            if any(
+                parameter.grad is not None
+                and not torch.all(torch.isfinite(parameter.grad))
+                for parameter in list(gain.parameters())
+                + list(certificate.parameters())
+            ):
+                raise RuntimeError("non-finite joint gradient")
             torch.nn.utils.clip_grad_norm_(
                 list(gain.parameters()) + list(certificate.parameters()), 1.0
             )
