@@ -61,6 +61,54 @@ def mass_norm(grid: AllenCahnGrid, values: np.ndarray) -> np.ndarray:
     return np.sqrt(grid.h * np.sum(array**2, axis=-1))
 
 
+def sampled_forced_tail_envelope(
+    times: np.ndarray,
+    tail_norm: np.ndarray,
+    forcing_norm: np.ndarray,
+    decay_margin: float,
+) -> np.ndarray:
+    """Propagate a sampled envelope for ``q' <= -a q + f``.
+
+    A non-increasing time stamp starts a new trajectory. On each saved time
+    interval the forcing is bounded by the larger endpoint value. The result
+    is a reproducible sampled envelope, not a continuous-time bound between
+    saved outputs.
+    """
+
+    time_array = np.asarray(times, dtype=float)
+    tail_array = np.asarray(tail_norm, dtype=float)
+    forcing_array = np.asarray(forcing_norm, dtype=float)
+    if time_array.ndim != 1 or time_array.size == 0:
+        raise ValueError("times must be a non-empty one-dimensional array")
+    if tail_array.shape != time_array.shape or forcing_array.shape != time_array.shape:
+        raise ValueError("tail_norm and forcing_norm must match times")
+    if not np.isfinite(decay_margin) or decay_margin <= 0.0:
+        raise ValueError("decay_margin must be a positive finite scalar")
+    if not (
+        np.all(np.isfinite(time_array))
+        and np.all(np.isfinite(tail_array))
+        and np.all(np.isfinite(forcing_array))
+    ):
+        raise ValueError("sampled envelope inputs must be finite")
+    if np.any(tail_array < 0.0) or np.any(forcing_array < 0.0):
+        raise ValueError("norm inputs must be non-negative")
+
+    envelope = np.empty_like(tail_array)
+    envelope[0] = tail_array[0]
+    for index in range(1, time_array.size):
+        dt = time_array[index] - time_array[index - 1]
+        if dt <= 0.0:
+            envelope[index] = tail_array[index]
+            continue
+        contraction = np.exp(-decay_margin * dt)
+        interval_forcing = max(forcing_array[index - 1], forcing_array[index])
+        envelope[index] = (
+            contraction * envelope[index - 1]
+            + (1.0 - contraction) * interval_forcing / decay_margin
+        )
+    return envelope
+
+
 @dataclass(frozen=True)
 class TailAudit:
     """Sampled terms in the high-frequency Allen--Cahn energy inequality."""

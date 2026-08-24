@@ -28,6 +28,7 @@ from .spectral import (
     dirichlet_sine_basis,
     low_frequency_projector,
     mass_norm,
+    sampled_forced_tail_envelope,
     split_low_tail,
 )
 from .training import (
@@ -62,6 +63,7 @@ __all__ = [
     "low_frequency_projector",
     "mass_norm",
     "noise_waveform",
+    "sampled_forced_tail_envelope",
     "simulate_causal_nudging",
     "simulate_learned_correction",
     "solve_allen_cahn",

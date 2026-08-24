@@ -23,6 +23,7 @@ from allen_cahn_certified_observer import (
     generate_pilot_cases,
     local_average_matrix,
     noise_waveform,
+    sampled_forced_tail_envelope,
     simulate_causal_nudging,
 )
 
@@ -1227,7 +1228,13 @@ def _tail_audit(
         forcing = audit.low_to_tail_coupling_norm + audit.correction_tail_norm
         damping = audit.diffusion_margin * audit.tail_norm
         tail_fraction = audit.tail_norm / (audit.total_norm + 1.0e-12)
-        forcing_ratio = forcing / (damping + 1.0e-12)
+        envelope = sampled_forced_tail_envelope(
+            sample_set.times[mask],
+            audit.tail_norm,
+            forcing,
+            audit.diffusion_margin,
+        )
+        envelope_violation = audit.tail_norm - envelope
         decomposition_residual = np.abs(
             audit.total_norm**2 - audit.low_norm**2 - audit.tail_norm**2
         )
@@ -1240,8 +1247,10 @@ def _tail_audit(
                 audit.low_to_tail_coupling_norm
             ),
             "correction_tail_norm": _ratio_summary(audit.correction_tail_norm),
-            "forcing_to_tail_damping_ratio": _ratio_summary(forcing_ratio),
-            "sampled_decay_bound_fraction": float(np.mean(forcing < damping)),
+            "forced_radius": _ratio_summary(forcing / audit.diffusion_margin),
+            "sampled_tail_envelope": _ratio_summary(envelope),
+            "sampled_tail_envelope_violation_max": float(np.max(envelope_violation)),
+            "instantaneous_decay_bound_fraction": float(np.mean(forcing < damping)),
             "actual_tail_energy_decay_fraction": float(
                 np.mean(audit.energy_rate < 0.0)
             ),
@@ -1262,6 +1271,7 @@ def _tail_audit(
             all(
                 item["tail_inequality_residual_max"] <= 1.0e-8
                 and item["dissipativity_violation_max"] <= 1.0e-8
+                and item["sampled_tail_envelope_violation_max"] <= 1.0e-8
                 for item in by_nu.values()
             )
         ),

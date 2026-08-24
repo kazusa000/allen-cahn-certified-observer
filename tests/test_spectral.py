@@ -7,6 +7,7 @@ from allen_cahn_certified_observer.spectral import (
     dirichlet_sine_basis,
     low_frequency_projector,
     mass_norm,
+    sampled_forced_tail_envelope,
     split_low_tail,
 )
 
@@ -65,3 +66,14 @@ def test_tail_audit_uses_positive_diffusion_margin_and_valid_bound() -> None:
     assert audit.dissipativity_violation_max <= 1.0e-14
     assert audit.inequality_residual_max <= 1.0e-12
     assert np.allclose(audit.total_norm**2, audit.low_norm**2 + audit.tail_norm**2)
+
+
+def test_sampled_tail_envelope_resets_and_bounds_constant_forcing_solution() -> None:
+    times = np.asarray([0.0, 0.1, 0.2, 0.0, 0.1])
+    margin = 2.0
+    forcing = np.ones_like(times) * 0.5
+    exact = 0.25 * (1.0 - np.exp(-margin * times))
+
+    envelope = sampled_forced_tail_envelope(times, exact, forcing, margin)
+
+    assert np.allclose(envelope, exact)
