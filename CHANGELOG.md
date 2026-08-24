@@ -44,3 +44,5 @@
   non-finite loss/gradient checks after it was found to contaminate preliminary online rollouts.
 - Aligned the stage-two constant correction initialization with the frozen gain-0.10 validation
   comparator after the first structure screen exposed an incompatible gain-0.02 trust region.
+- Completed the calibrated R5 dynamics-defect repair screen on the RTX 2060; validation defect RMS
+  improved by 10.5% but failed the frozen 50% progress gate, so no multi-grid expansion was run.

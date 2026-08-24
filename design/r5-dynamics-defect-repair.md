@@ -4,7 +4,7 @@
 
 - ID：R5-dynamics-defect-repair-2026-08-23
 - 类型：Code Experiment Plan
-- 状态：PRE-REGISTERED
+- 状态：COMPLETED — PROGRESS GATE FAILED
 - 前序结果：`report/r5-normalized-refresh.md`
 
 ## 研究问题
@@ -152,3 +152,8 @@ ODE 复核超过 30 分钟硬超时，因此在正式筛选前按运行安全规
 0.10。该运行保留为校准负对照，不用于最终在线性能裁决。修正版把 (B) 初始化对齐到 0.10；
 前三项范围变为 0.05--0.15，第四项变为 0.01--0.19。原有 seed、epoch、损失权重、
 validation 选择规则和 50% 动力学缺陷进展门槛全部保持不变。
+
+最终校准筛选选中三角 (T_\phi)、当前轨迹替换、稳定损失权重 1、传感器增益相对范围
+0.5。固定/当前验证轨迹动力学缺陷 RMS 为 0.6566/0.6561，相对历史 0.7336 只下降
+10.5%，未通过 50% 进展门槛，因此没有进入三网格正式训练。完整结果见
+`report/r5-dynamics-defect-repair.md`。
