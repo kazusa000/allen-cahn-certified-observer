@@ -12,6 +12,10 @@
   calibration-only capacity screen after the first full pilot saturated both
   the residual spectral budget and the gain trust region; formal validation is
   reserved for a fresh split after capacity selection.
+- Corrected the missing `R = diag(-1,-1,1,1)` change of basis when moving the
+  LMI gain and metric from NumPy `eigh` modes to the fixed physical sine basis;
+  added hard regressions that the lifted gain and contraction rate reproduce
+  the original LMI design before any network-capacity conclusion is allowed.
 - Froze the next fresh-split joint experiment around the LMI transform:
   `T_phi(u,e)=T0[e+g_tilde(u,e)-g_tilde(u,0)]`, retaining the full nonlinear
   target and exactly four losses while enforcing global invertibility in

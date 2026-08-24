@@ -220,11 +220,31 @@ locked test 都使用高精度因果观测器重新积分并报告终点与全�
 
 ## 预注册修订：正式运行前的容量筛选
 
-首个单 seed、80 epoch pilot 严格使用上述配置和 calibration seed 1801。结果显示
-$\rho=0.35$ 的谱预算和 25% 的增益信赖域都达到硬边界，但三个网格的最坏 validation
-余量仍为负，因此不直接重复三个 seed。该 pilot 没有读取 locked test。
+首个单 seed、80 epoch pilot 后发现：LMI 使用 `eigh` 模态 $V_{\mathrm{eigh}}$，跨网格网络使用
+固定正弦模态 $V_{\sin}$，两者满足
 
-在保持同一 calibration split、同一模型 seed 1301、同一训练步数和 test 锁定的条件下，只筛选
+\[
+V_{\mathrm{eigh}}=V_{\sin}R,
+\qquad R=\operatorname{diag}(-1,-1,1,1).
+\]
+
+旧实现搬运 $B_0,T_0$ 时遗漏了 $R$，所以旧 pilot 的固定基线并不是原 LMI 系统；此前所有
+CVaR 平台和容量筛选数字均作废，C2/C3 运行已停止，locked test 从未读取。
+
+修正后的固定坐标初始化必须为
+
+\[
+\Beta_0=\sqrt h\,RK,
+\qquad
+T_0=RP^{1/2}R^{\mathsf T}.
+\]
+
+正式运行前新增硬回归门：固定正弦坐标提升后的 $B_0$ 必须逐项等于 LMI 的网格增益，且由
+$T_0^{\mathsf T}T_0$ 重新计算的收缩率必须在 $10^{-10}$ 内复现原 LMI 收缩率。只有该门通过
+后才重新运行原始 $\rho=0.35$、25% 增益域基线，随后才能判断是否需要以下容量筛选。
+
+若修正基线仍显示两个硬预算饱和且最坏余量为负，则在保持同一 calibration split、同一模型
+seed 1301、同一训练步数和 test 锁定的条件下，只筛选
 以下三组结构容量：
 
 | 方案 | $\rho$ | 增益信赖域 | 误差输入尺度 |

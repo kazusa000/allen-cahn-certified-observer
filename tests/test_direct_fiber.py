@@ -10,8 +10,12 @@ sys.path.insert(0, str(TOOL_DIR))
 from r5_direct_fiber_multigrid_joint import (
     ALPHA,
     THREE_SENSOR_INTERVALS,
+    _balanced_metric_sqrt,
+    _base_design,
     _collocation_samples,
     _fiber_components,
+    _fixed_coordinate_contraction_rate,
+    _fixed_sine_basis_change,
     _positive_control,
     _torch_context,
 )
@@ -22,12 +26,14 @@ from allen_cahn_certified_observer import (
     build_projected_constant_gain,
     dirichlet_sine_basis,
     local_average_matrix,
+    lmi_modal_injection,
     mesh_shared_fiber_transform,
     modal_residual_jacobian_bounds,
     modal_residual_path_layer_bound,
     physical_modal_coordinates,
     physical_modal_injection,
     reconstruct_physical_modes,
+    unstable_modal_system,
 )
 
 
@@ -202,3 +208,44 @@ def test_four_sensor_positive_control_passes_every_grid() -> None:
         item["global_semidiscrete_margin"] > 0.0
         for item in result["grids"].values()
     )
+
+
+def test_fixed_sine_coordinates_exactly_reproduce_lmi_design() -> None:
+    pytest.importorskip("cvxpy")
+    grid = AllenCahnGrid(31)
+    observation = local_average_matrix(grid, THREE_SENSOR_INTERVALS)
+    selected = lmi_modal_injection(
+        grid,
+        0.005,
+        observation,
+        decay_rate=ALPHA,
+        metric_condition_bound=16.0,
+    )
+    modal = unstable_modal_system(grid, 0.005, observation)
+    change = _fixed_sine_basis_change(grid, modal)
+    fixed_basis = dirichlet_sine_basis(grid, 4)
+    beta = np.sqrt(grid.h) * change @ selected.modal_gain
+    modal_transform = _balanced_metric_sqrt(selected.modal_metric)
+    transform = change @ modal_transform @ change.T
+    lifted_injection = fixed_basis @ beta / np.sqrt(grid.h)
+    reproduced_rate = _fixed_coordinate_contraction_rate(
+        grid, observation, modal.eigenvalues, beta, transform
+    )
+
+    assert np.diag(change) == pytest.approx([-1.0, -1.0, 1.0, 1.0])
+    assert lifted_injection == pytest.approx(
+        selected.injection_matrix, abs=1.0e-10, rel=1.0e-10
+    )
+    assert reproduced_rate == pytest.approx(
+        selected.modal_contraction_rate, abs=1.0e-10, rel=1.0e-10
+    )
+
+
+def test_base_design_reports_fixed_coordinate_rate_reproduction() -> None:
+    pytest.importorskip("cvxpy")
+    _, _, diagnostics = _base_design()
+
+    assert diagnostics["eigh_to_fixed_sine_change"] == pytest.approx(
+        np.diag([-1.0, -1.0, 1.0, 1.0])
+    )
+    assert diagnostics["fixed_sine_rate_absolute_error"] <= 1.0e-10

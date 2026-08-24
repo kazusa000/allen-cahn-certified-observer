@@ -80,6 +80,40 @@ def _balanced_metric_sqrt(metric: np.ndarray) -> np.ndarray:
     return eigenvectors @ np.diag(np.sqrt(scale * eigenvalues)) @ eigenvectors.T
 
 
+def _fixed_sine_basis_change(
+    grid: AllenCahnGrid, modal: object
+) -> np.ndarray:
+    """Return ``R`` with ``V_eigh = V_sine R`` on the unstable modes."""
+
+    fixed = dirichlet_sine_basis(grid, modal.dimension)
+    change = fixed.T @ modal.modes
+    diagonal = np.diag(np.diag(change))
+    if not np.allclose(change, diagonal, atol=1.0e-10, rtol=0.0):
+        raise RuntimeError("eigh modes are not aligned with fixed sine ordering")
+    if not np.allclose(np.abs(np.diag(change)), 1.0, atol=1.0e-10, rtol=0.0):
+        raise RuntimeError("eigh-to-sine basis change is not a sign matrix")
+    return diagonal
+
+
+def _fixed_coordinate_contraction_rate(
+    grid: AllenCahnGrid,
+    observation: np.ndarray,
+    eigenvalues: np.ndarray,
+    physical_gain: np.ndarray,
+    transform: np.ndarray,
+) -> float:
+    """Audit the LMI rate after moving to fixed physical sine coordinates."""
+
+    fixed = dirichlet_sine_basis(grid, eigenvalues.size) / np.sqrt(grid.h)
+    closed_loop = np.diag(eigenvalues) - physical_gain @ (observation @ fixed)
+    metric = transform.T @ transform
+    derivative = closed_loop.T @ metric + metric @ closed_loop
+    cholesky = np.linalg.cholesky(metric)
+    inverse = np.linalg.inv(cholesky)
+    normalized = inverse @ derivative @ inverse.T
+    return float(-0.5 * np.max(np.linalg.eigvalsh(normalized)))
+
+
 def _base_design() -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     grid = AllenCahnGrid(31)
     observation = local_average_matrix(grid, THREE_SENSOR_INTERVALS)
@@ -103,8 +137,20 @@ def _base_design() -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     modal = unstable_modal_system(grid, NU_VALUE, observation)
     if modal.dimension != LOW_MODE_COUNT:
         raise RuntimeError("the frozen nu=0.005 problem must have four unstable modes")
-    physical_gain = np.sqrt(grid.h) * selected.modal_gain
-    transform = _balanced_metric_sqrt(selected.modal_metric)
+    change = _fixed_sine_basis_change(grid, modal)
+    physical_gain = np.sqrt(grid.h) * change @ selected.modal_gain
+    modal_transform = _balanced_metric_sqrt(selected.modal_metric)
+    transform = change @ modal_transform @ change.T
+    reproduced_rate = _fixed_coordinate_contraction_rate(
+        grid,
+        observation,
+        modal.eigenvalues,
+        physical_gain,
+        transform,
+    )
+    rate_error = abs(reproduced_rate - selected.modal_contraction_rate)
+    if rate_error > 1.0e-8:
+        raise RuntimeError("fixed sine coordinates do not reproduce the LMI rate")
     return physical_gain, transform, {
         "design_grid": grid.n,
         "condition_bound": selected_bound,
@@ -115,6 +161,9 @@ def _base_design() -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
         "closed_loop_spectral_abscissa": selected.closed_loop_spectral_abscissa,
         "modal_contraction_rate": selected.modal_contraction_rate,
         "modal_metric_condition": selected.modal_metric_condition,
+        "eigh_to_fixed_sine_change": change.tolist(),
+        "fixed_sine_reproduced_contraction_rate": reproduced_rate,
+        "fixed_sine_rate_absolute_error": rate_error,
         "physical_modal_gain_norm": float(np.linalg.norm(physical_gain)),
         "transform_singular_values": np.linalg.svd(transform, compute_uv=False).tolist(),
     }
