@@ -21,6 +21,7 @@ from r5_direct_fiber_multigrid_joint import (
 )
 from r5_direct_fiber_adversarial_repair import (
     _adversarial_low_mode_samples,
+    _hard_point_neighborhood,
     _seed_for_epoch,
 )
 
@@ -88,6 +89,26 @@ def test_resampling_seeds_change_by_model_epoch_and_grid() -> None:
     assert len(seeds) == 12
 
 
+def test_hard_replay_center_exactly_matches_consumed_bad_point() -> None:
+    torch = pytest.importorskip("torch")
+    grid = AllenCahnGrid(63)
+    observation = local_average_matrix(grid, THREE_SENSOR_INTERVALS)
+    consumed = _collocation_samples(
+        grid, observation, seed=1851, count=2048
+    )
+
+    neighborhood = _hard_point_neighborhood(
+        torch, count=4, seed=5404, device="cpu"
+    )
+
+    assert neighborhood["states"][0] == pytest.approx(
+        consumed["states"][471], abs=2.0e-7, rel=2.0e-7
+    )
+    assert neighborhood["errors"][0] == pytest.approx(
+        consumed["errors"][471], abs=2.0e-7, rel=2.0e-7
+    )
+
+
 def test_low_mode_adversarial_search_is_differentiable_and_projected() -> None:
     torch = pytest.importorskip("torch")
     pytest.importorskip("cvxpy")
@@ -108,6 +129,7 @@ def test_low_mode_adversarial_search_is_differentiable_and_projected() -> None:
         torch,
         transform,
         gain,
+        grid_size=63,
         model_seed=13,
         refresh_index=0,
         restart_count=8,

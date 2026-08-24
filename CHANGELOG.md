@@ -98,6 +98,9 @@
   margin buffer.
 - Added the checkpoint-initialized repair runner, compact-domain projection,
   buffered CVaR objective, and regression tests for the new training path.
+- Recorded the failed first calibration without consuming the fresh validation
+  split, then added fixed-pool replay, all-grid adversaries, teacher anchoring,
+  and a transparent neighborhood replay of the consumed grid-63 bad point.
 - Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
   locked-test policy unchanged.
 

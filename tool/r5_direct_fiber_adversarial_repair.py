@@ -85,6 +85,7 @@ def _adversarial_low_mode_samples(
     transform: object,
     gain: object,
     *,
+    grid_size: int,
     model_seed: int,
     refresh_index: int,
     restart_count: int,
@@ -93,17 +94,21 @@ def _adversarial_low_mode_samples(
     step_size: float,
     device: str,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
-    """Search the frozen grid-63 low-mode domain for current worst cases."""
+    """Search one frozen-grid low-mode domain for current worst cases."""
 
     if not 1 <= keep_count <= restart_count:
         raise ValueError("keep_count must lie between one and restart_count")
     if steps < 1 or step_size <= 0.0:
         raise ValueError("adversarial steps and step_size must be positive")
-    n = 63
+    if grid_size not in GRID_SIZES:
+        raise ValueError(f"grid_size must be one of {GRID_SIZES}")
+    n = int(grid_size)
     context = _torch_context(torch, n, device=device, dtype=torch.float32)
     grid = context["grid"]
     generator = torch.Generator(device=device)
-    search_seed = int(3101 + 100_000 * model_seed + refresh_index)
+    search_seed = int(
+        3101 + 100_000 * model_seed + 1_000 * refresh_index + n
+    )
     generator.manual_seed(search_seed)
 
     state_coefficients = torch.randn(
@@ -189,6 +194,7 @@ def _adversarial_low_mode_samples(
     )
     worst_index = int(indices[0].detach().cpu())
     diagnostics = {
+        "grid_size": n,
         "search_seed": search_seed,
         "restart_count": restart_count,
         "keep_count": keep_count,
@@ -210,6 +216,97 @@ def _adversarial_low_mode_samples(
         "states": selected_states.cpu().numpy().astype(float),
         "errors": selected_errors.cpu().numpy().astype(float),
     }, diagnostics
+
+
+def _fixed_replay_samples(count: int) -> dict[int, dict[str, np.ndarray]]:
+    """Recreate the original fixed training pool for anti-forgetting replay."""
+
+    samples: dict[int, dict[str, np.ndarray]] = {}
+    for n in GRID_SIZES:
+        grid = AllenCahnGrid(n)
+        observation = local_average_matrix(grid, THREE_SENSOR_INTERVALS)
+        samples[n] = _collocation_samples(
+            grid, observation, seed=1701, count=count
+        )
+    return samples
+
+
+def _hard_point_neighborhood(
+    torch: object,
+    *,
+    count: int,
+    seed: int,
+    device: str,
+) -> dict[str, np.ndarray]:
+    """Build a projected neighborhood of the consumed grid-63 bad point."""
+
+    if count < 1:
+        raise ValueError("hard replay count must be positive")
+    grid = AllenCahnGrid(63)
+    observation = local_average_matrix(grid, THREE_SENSOR_INTERVALS)
+    consumed = _collocation_samples(grid, observation, seed=1851, count=2048)
+    condition_basis_numpy = dirichlet_sine_basis(grid, CONDITION_MODE_COUNT)
+    low_basis_numpy = condition_basis_numpy[:, :LOW_MODE_COUNT]
+    state_center = (
+        np.sqrt(grid.h) * consumed["states"][471] @ condition_basis_numpy
+    )
+    error_center = np.sqrt(grid.h) * consumed["errors"][471] @ low_basis_numpy
+    generator = np.random.Generator(np.random.PCG64DXSM(seed))
+    state_coefficients = np.repeat(state_center[None, :], count, axis=0)
+    error_coefficients = np.repeat(error_center[None, :], count, axis=0)
+    if count > 1:
+        state_coefficients[1:] += generator.normal(
+            scale=0.02, size=(count - 1, CONDITION_MODE_COUNT)
+        )
+        error_coefficients[1:] += generator.normal(
+            scale=0.01, size=(count - 1, LOW_MODE_COUNT)
+        )
+    state_tensor = torch.as_tensor(
+        state_coefficients, dtype=torch.float32, device=device
+    )
+    error_tensor = torch.as_tensor(
+        error_coefficients, dtype=torch.float32, device=device
+    )
+    condition_basis = torch.as_tensor(
+        condition_basis_numpy, dtype=torch.float32, device=device
+    )
+    low_basis = condition_basis[:, :LOW_MODE_COUNT]
+    project_physical_modal_adversaries_(
+        torch, state_tensor, error_tensor, condition_basis, grid.h
+    )
+    return {
+        "states": _modal_values_torch(
+            state_tensor, condition_basis, grid.h
+        ).cpu().numpy().astype(float),
+        "errors": _modal_values_torch(
+            error_tensor, low_basis, grid.h
+        ).cpu().numpy().astype(float),
+    }
+
+
+def _transform_teacher_loss(
+    torch: object,
+    transform: object,
+    teacher: object,
+    states: object,
+    errors: object,
+    context: dict[str, object],
+) -> object:
+    """Anchor the transform function on replay/random points, not parameters."""
+
+    grid = context["grid"]
+    state_coefficients = float(np.sqrt(grid.h)) * (
+        states @ context["condition_basis"]
+    )
+    error_coefficients = float(np.sqrt(grid.h)) * (
+        errors @ context["low_basis"]
+    )
+    with torch.no_grad():
+        target = teacher(state_coefficients, error_coefficients)
+    actual = transform(state_coefficients, error_coefficients)
+    numerator = torch.sum((actual - target) ** 2, dim=1)
+    denominator = torch.sum(target**2, dim=1).clamp_min(1.0e-6)
+    return torch.mean(numerator / denominator)
 
 
 def _load_initialized_model(
@@ -291,6 +388,8 @@ def _train_seed(
     batch_size: int,
     rollout_batch_size: int,
     resample_count: int,
+    replay_count: int,
+    hard_replay_count: int,
     contraction_buffer: float,
     adversary_refresh_epochs: int,
     adversary_restarts: int,
@@ -303,6 +402,11 @@ def _train_seed(
     gain_trust_ratio: float,
     gain_learning_rate: float,
     transform_learning_rate: float,
+    robust_multiplier_start: float,
+    robust_multiplier_end: float,
+    online_weight: float,
+    transform_teacher_weight: float,
+    gain_teacher_weight: float,
     error_scale: float,
     device: str,
     checkpoint_dir: Path,
@@ -323,6 +427,23 @@ def _train_seed(
         error_scale=error_scale,
         device=device,
     )
+    teacher_gain, teacher_transform, _ = _load_initialized_model(
+        torch,
+        checkpoint=initial_checkpoint,
+        base_gain=base_gain,
+        base_transform=base_transform,
+        seed=seed,
+        rho=rho,
+        hidden_width=hidden_width,
+        hidden_layers=hidden_layers,
+        gain_trust_ratio=gain_trust_ratio,
+        error_scale=error_scale,
+        device=device,
+    )
+    for parameter in list(teacher_gain.parameters()) + list(
+        teacher_transform.parameters()
+    ):
+        parameter.requires_grad_(False)
     optimizer = torch.optim.Adam(
         [
             {"params": gain.parameters(), "lr": gain_learning_rate},
@@ -333,9 +454,27 @@ def _train_seed(
         n: _torch_context(torch, n, device=device, dtype=torch.float32)
         for n in GRID_SIZES
     }
+    replay_numpy = _fixed_replay_samples(replay_count)
+    replay_tensors = {
+        n: {
+            name: torch.as_tensor(value, dtype=torch.float32, device=device)
+            for name, value in values.items()
+        }
+        for n, values in replay_numpy.items()
+    }
+    hard_numpy = _hard_point_neighborhood(
+        torch,
+        count=hard_replay_count,
+        seed=4101 + seed,
+        device=device,
+    )
+    hard_tensors = {
+        name: torch.as_tensor(value, dtype=torch.float32, device=device)
+        for name, value in hard_numpy.items()
+    }
     history: list[dict[str, float]] = []
     adversary_history: list[dict[str, object]] = []
-    adversarial_samples: dict[str, np.ndarray] | None = None
+    adversarial_samples: dict[int, dict[str, np.ndarray]] = {}
     global_step = 0
 
     for epoch in range(epochs):
@@ -350,51 +489,90 @@ def _train_seed(
             for n, values in sampled.items()
         }
         if epoch % adversary_refresh_epochs == 0:
-            adversarial_samples, diagnostics = _adversarial_low_mode_samples(
-                torch,
-                transform,
-                gain,
-                model_seed=seed,
-                refresh_index=epoch // adversary_refresh_epochs,
-                restart_count=adversary_restarts,
-                keep_count=adversary_keep,
-                steps=adversary_steps,
-                step_size=adversary_step_size,
-                device=device,
-            )
-            diagnostics["epoch"] = epoch + 1
-            adversary_history.append(diagnostics)
-        if adversarial_samples is None:
-            raise RuntimeError("adversarial pool was not initialized")
+            for n in GRID_SIZES:
+                values, diagnostics = _adversarial_low_mode_samples(
+                    torch,
+                    transform,
+                    gain,
+                    grid_size=n,
+                    model_seed=seed,
+                    refresh_index=epoch // adversary_refresh_epochs,
+                    restart_count=adversary_restarts,
+                    keep_count=adversary_keep,
+                    steps=adversary_steps,
+                    step_size=adversary_step_size,
+                    device=device,
+                )
+                adversarial_samples[n] = values
+                diagnostics["epoch"] = epoch + 1
+                adversary_history.append(diagnostics)
+        if set(adversarial_samples) != set(GRID_SIZES):
+            raise RuntimeError("adversarial pools were not initialized")
         adversarial_tensors = {
-            name: torch.as_tensor(value, dtype=torch.float32, device=device)
-            for name, value in adversarial_samples.items()
+            n: {
+                name: torch.as_tensor(value, dtype=torch.float32, device=device)
+                for name, value in values.items()
+            }
+            for n, values in adversarial_samples.items()
         }
 
         totals = {
             "contraction": 0.0,
             "online": 0.0,
             "gain": 0.0,
+            "transform_teacher": 0.0,
+            "gain_teacher": 0.0,
             "total": 0.0,
             "sampled_margin_min": 0.0,
         }
-        multiplier = 5.0 + 35.0 * epoch / max(epochs - 1, 1)
+        multiplier = robust_multiplier_start + (
+            robust_multiplier_end - robust_multiplier_start
+        ) * epoch / max(epochs - 1, 1)
         for step in range(steps_per_epoch):
             n = GRID_SIZES[(global_step + step) % len(GRID_SIZES)]
-            random_count = batch_size
-            if n == 63:
-                random_count -= adversary_keep
-            indices = torch.randint(
+            reserved_count = adversary_keep + (
+                hard_replay_count if n == 63 else 0
+            )
+            random_count = batch_size - reserved_count
+            dynamic_count = random_count // 2
+            replay_batch_count = random_count - dynamic_count
+            dynamic_indices = torch.randint(
                 0,
                 int(tensors[n]["states"].shape[0]),
-                (random_count,),
+                (dynamic_count,),
                 device=device,
             )
-            states = tensors[n]["states"][indices]
-            errors = tensors[n]["errors"][indices]
+            replay_indices = torch.randint(
+                0,
+                int(replay_tensors[n]["states"].shape[0]),
+                (replay_batch_count,),
+                device=device,
+            )
+            states = torch.cat(
+                (
+                    tensors[n]["states"][dynamic_indices],
+                    replay_tensors[n]["states"][replay_indices],
+                ),
+                dim=0,
+            )
+            errors = torch.cat(
+                (
+                    tensors[n]["errors"][dynamic_indices],
+                    replay_tensors[n]["errors"][replay_indices],
+                ),
+                dim=0,
+            )
+            anchor_states = states
+            anchor_errors = errors
+            states = torch.cat(
+                (states, adversarial_tensors[n]["states"]), dim=0
+            )
+            errors = torch.cat(
+                (errors, adversarial_tensors[n]["errors"]), dim=0
+            )
             if n == 63:
-                states = torch.cat((states, adversarial_tensors["states"]), dim=0)
-                errors = torch.cat((errors, adversarial_tensors["errors"]), dim=0)
+                states = torch.cat((states, hard_tensors["states"]), dim=0)
+                errors = torch.cat((errors, hard_tensors["errors"]), dim=0)
             trajectory_indices = torch.randperm(
                 train_truth["states"].shape[0], device=device
             )[:rollout_batch_size]
@@ -418,11 +596,29 @@ def _train_seed(
             online = _online_loss(
                 torch, gain, train_truth, trajectory_indices, contexts[31]
             )
+            transform_teacher = _transform_teacher_loss(
+                torch,
+                transform,
+                teacher_transform,
+                anchor_states,
+                anchor_errors,
+                contexts[n],
+            )
+            gain_teacher = (
+                torch.linalg.vector_norm(gain() - teacher_gain()) ** 2
+                / torch.linalg.vector_norm(teacher_gain()).clamp_min(1.0e-12) ** 2
+            )
             gain_regularization = (
                 torch.linalg.vector_norm(gain.delta) ** 2
                 / torch.linalg.vector_norm(gain.base_gain).clamp_min(1.0e-12) ** 2
             )
-            total = multiplier * contraction + online + 0.01 * gain_regularization
+            total = (
+                multiplier * contraction
+                + online_weight * online
+                + transform_teacher_weight * transform_teacher
+                + gain_teacher_weight * gain_teacher
+                + 0.001 * gain_regularization
+            )
             if not bool(torch.isfinite(total)):
                 raise RuntimeError(
                     f"non-finite loss at seed={seed}, epoch={epoch + 1}"
@@ -445,6 +641,8 @@ def _train_seed(
                 "contraction": contraction,
                 "online": online,
                 "gain": gain_regularization,
+                "transform_teacher": transform_teacher,
+                "gain_teacher": gain_teacher,
                 "total": total,
                 "sampled_margin_min": torch.min(components["margins"]),
             }
@@ -461,7 +659,7 @@ def _train_seed(
                 f"[repair seed={seed}] epoch={epoch + 1}/{epochs} "
                 f"total={record['total']:.6g} robust={record['contraction']:.6g} "
                 f"sample-margin={record['sampled_margin_min']:.6g} "
-                f"adv-margin={adversary_history[-1]['final_margin_min']:.6g}",
+                f"adv-margin={min(item['final_margin_min'] for item in adversary_history[-3:]):.6g}",
                 flush=True,
             )
 
@@ -510,6 +708,13 @@ def _train_seed(
             "gain_trust_ratio": gain_trust_ratio,
             "error_scale": error_scale,
             "contraction_buffer": contraction_buffer,
+            "replay_count": replay_count,
+            "hard_replay_count": hard_replay_count,
+            "robust_multiplier_start": robust_multiplier_start,
+            "robust_multiplier_end": robust_multiplier_end,
+            "online_weight": online_weight,
+            "transform_teacher_weight": transform_teacher_weight,
+            "gain_teacher_weight": gain_teacher_weight,
             "initial_checkpoint": str(initial_checkpoint),
         },
         checkpoint,
@@ -530,6 +735,8 @@ def run(
     batch_size: int,
     rollout_batch_size: int,
     resample_count: int,
+    replay_count: int,
+    hard_replay_count: int,
     validation_count: int,
     test_count: int,
     contraction_buffer: float,
@@ -544,6 +751,11 @@ def run(
     gain_trust_ratio: float,
     gain_learning_rate: float,
     transform_learning_rate: float,
+    robust_multiplier_start: float,
+    robust_multiplier_end: float,
+    online_weight: float,
+    transform_teacher_weight: float,
+    gain_teacher_weight: float,
     error_scale: float,
     device: str,
     checkpoint_dir: Path,
@@ -605,6 +817,8 @@ def run(
             batch_size=batch_size,
             rollout_batch_size=rollout_batch_size,
             resample_count=resample_count,
+            replay_count=replay_count,
+            hard_replay_count=hard_replay_count,
             contraction_buffer=contraction_buffer,
             adversary_refresh_epochs=adversary_refresh_epochs,
             adversary_restarts=adversary_restarts,
@@ -617,6 +831,11 @@ def run(
             gain_trust_ratio=gain_trust_ratio,
             gain_learning_rate=gain_learning_rate,
             transform_learning_rate=transform_learning_rate,
+            robust_multiplier_start=robust_multiplier_start,
+            robust_multiplier_end=robust_multiplier_end,
+            online_weight=online_weight,
+            transform_teacher_weight=transform_teacher_weight,
+            gain_teacher_weight=gain_teacher_weight,
             error_scale=error_scale,
             device=device,
             checkpoint_dir=checkpoint_dir,
@@ -703,9 +922,11 @@ def run(
             "batch_size": batch_size,
             "rollout_batch_size": rollout_batch_size,
             "resample_count_per_epoch_per_grid": resample_count,
+            "fixed_replay_count_per_grid": replay_count,
+            "hard_replay_count_grid_63": hard_replay_count,
             "resample_seed_base": RESAMPLE_SEED_BASE,
             "contraction_buffer": contraction_buffer,
-            "adversary_grid": 63,
+            "adversary_grids": list(GRID_SIZES),
             "adversary_refresh_epochs": adversary_refresh_epochs,
             "adversary_restarts": adversary_restarts,
             "adversary_keep": adversary_keep,
@@ -717,6 +938,11 @@ def run(
             "gain_trust_ratio": gain_trust_ratio,
             "gain_learning_rate": gain_learning_rate,
             "transform_learning_rate": transform_learning_rate,
+            "robust_multiplier_start": robust_multiplier_start,
+            "robust_multiplier_end": robust_multiplier_end,
+            "online_weight": online_weight,
+            "transform_teacher_weight": transform_teacher_weight,
+            "gain_teacher_weight": gain_teacher_weight,
             "error_scale": error_scale,
             "validation_seed": validation_seed,
             "validation_count_per_grid": validation_count,
@@ -724,7 +950,7 @@ def run(
             "test_count_per_grid": test_count,
             "allow_locked_test": allow_locked_test,
             "test_locked_until_two_seeds_pass": True,
-            "exact_previous_bad_point_used_for_training": False,
+            "calibration_bad_point_neighborhood_used_for_training": True,
         },
         "base_diagnostics": base_diagnostics,
         "positive_control_four_sensor": _positive_control(),
@@ -754,12 +980,14 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--rollout-batch-size", type=int, default=2)
     parser.add_argument("--resample-count", type=int, default=2048)
+    parser.add_argument("--replay-count", type=int, default=4096)
+    parser.add_argument("--hard-replay-count", type=int, default=32)
     parser.add_argument("--validation-count", type=int, default=4096)
     parser.add_argument("--test-count", type=int, default=8192)
     parser.add_argument("--contraction-buffer", type=float, default=0.04)
     parser.add_argument("--adversary-refresh-epochs", type=int, default=2)
     parser.add_argument("--adversary-restarts", type=int, default=128)
-    parser.add_argument("--adversary-keep", type=int, default=64)
+    parser.add_argument("--adversary-keep", type=int, default=32)
     parser.add_argument("--adversary-steps", type=int, default=15)
     parser.add_argument("--adversary-step-size", type=float, default=0.02)
     parser.add_argument("--rho", type=float, default=0.35)
@@ -767,8 +995,13 @@ def main() -> None:
     parser.add_argument("--hidden-layers", type=int, default=3)
     parser.add_argument("--gain-trust-ratio", type=float, default=0.25)
     parser.add_argument("--error-scale", type=float, default=1.0)
-    parser.add_argument("--gain-learning-rate", type=float, default=1.0e-4)
-    parser.add_argument("--transform-learning-rate", type=float, default=3.0e-4)
+    parser.add_argument("--gain-learning-rate", type=float, default=2.0e-5)
+    parser.add_argument("--transform-learning-rate", type=float, default=1.0e-4)
+    parser.add_argument("--robust-multiplier-start", type=float, default=50.0)
+    parser.add_argument("--robust-multiplier-end", type=float, default=500.0)
+    parser.add_argument("--online-weight", type=float, default=0.2)
+    parser.add_argument("--transform-teacher-weight", type=float, default=0.5)
+    parser.add_argument("--gain-teacher-weight", type=float, default=5.0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -796,6 +1029,8 @@ def main() -> None:
         args.batch_size,
         args.rollout_batch_size,
         args.resample_count,
+        args.replay_count,
+        args.hard_replay_count,
         args.validation_count,
         args.test_count,
         args.adversary_refresh_epochs,
@@ -805,14 +1040,32 @@ def main() -> None:
     )
     if min(positive_counts) < 1:
         raise SystemExit("counts must be positive")
-    if min(args.resample_count, args.validation_count, args.test_count) < 128:
+    if min(
+        args.resample_count,
+        args.replay_count,
+        args.validation_count,
+        args.test_count,
+    ) < 128:
         raise SystemExit("collocation counts must be at least 128")
-    if args.adversary_keep >= args.batch_size:
-        raise SystemExit("--adversary-keep must be smaller than --batch-size")
+    if args.adversary_keep + args.hard_replay_count >= args.batch_size:
+        raise SystemExit(
+            "adversarial and hard replay points must leave room for random replay"
+        )
     if args.adversary_keep > args.adversary_restarts:
         raise SystemExit("--adversary-keep cannot exceed --adversary-restarts")
     if args.contraction_buffer <= 0.0 or args.adversary_step_size <= 0.0:
         raise SystemExit("buffer and adversarial step size must be positive")
+    positive_weights = (
+        args.robust_multiplier_start,
+        args.robust_multiplier_end,
+        args.online_weight,
+        args.transform_teacher_weight,
+        args.gain_teacher_weight,
+    )
+    if min(positive_weights) <= 0.0:
+        raise SystemExit("training weights must be positive")
+    if args.robust_multiplier_end < args.robust_multiplier_start:
+        raise SystemExit("robust multiplier schedule must be nondecreasing")
     if not 0.0 < args.rho < 1.0:
         raise SystemExit("--rho must lie in (0, 1)")
     if not 0.0 < args.gain_trust_ratio < 1.0:
@@ -839,6 +1092,8 @@ def main() -> None:
         batch_size=args.batch_size,
         rollout_batch_size=args.rollout_batch_size,
         resample_count=args.resample_count,
+        replay_count=args.replay_count,
+        hard_replay_count=args.hard_replay_count,
         validation_count=args.validation_count,
         test_count=args.test_count,
         contraction_buffer=args.contraction_buffer,
@@ -853,6 +1108,11 @@ def main() -> None:
         gain_trust_ratio=args.gain_trust_ratio,
         gain_learning_rate=args.gain_learning_rate,
         transform_learning_rate=args.transform_learning_rate,
+        robust_multiplier_start=args.robust_multiplier_start,
+        robust_multiplier_end=args.robust_multiplier_end,
+        online_weight=args.online_weight,
+        transform_teacher_weight=args.transform_teacher_weight,
+        gain_teacher_weight=args.gain_teacher_weight,
         error_scale=args.error_scale,
         device=args.device,
         checkpoint_dir=args.checkpoint_dir,
