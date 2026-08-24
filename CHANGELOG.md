@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Added the R5 low-frequency certificate mode with grid-consistent physical sine projections,
+  projected online correction, and separate high-frequency tail/coupling audits.
 - Added the R5-A Allen–Cahn reference model, discrete energy diagnostic, exact fixed-width local-average observations, and causal constant-gain nudging baseline.
 - Added the R5-B local incremental Jacobian/remainder diagnostics and offline causal observer rollout harness.
 - Added the R5-C offline certificate interface and fiber/direction/local-invertibility audit.

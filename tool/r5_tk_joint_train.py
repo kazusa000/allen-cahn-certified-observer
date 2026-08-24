@@ -18,6 +18,8 @@ from allen_cahn_certified_observer import (
     NullspaceCertificate,
     allen_cahn_energy,
     allen_cahn_rhs,
+    audit_high_frequency_tail,
+    dirichlet_sine_basis,
     generate_pilot_cases,
     local_average_matrix,
     noise_waveform,
@@ -331,13 +333,28 @@ def _build_models(
     shear_norm_limit: float = 0.0,
     gain_trust_ratio: float = 0.0,
     gain_kind: str = "dense",
+    low_modes: int | None = None,
 ) -> tuple[object, object]:
     nn = torch.nn
     n = grid.n
     q = matrix.shape[0]
     feature_dim = n + 2 * q + 2
-    basis = NullspaceCertificate(matrix).null_basis
-    row_basis = np.linalg.qr(matrix.T, mode="reduced")[0]
+    if low_modes is None:
+        loss_projector = np.eye(n, dtype=float)
+        basis = NullspaceCertificate(matrix).null_basis
+        row_basis = np.linalg.qr(matrix.T, mode="reduced")[0]
+        injection_basis = matrix.T
+    else:
+        if not 1 <= low_modes < n:
+            raise ValueError("low_modes must satisfy 1 <= low_modes < grid.n")
+        mode_basis = dirichlet_sine_basis(grid, low_modes)
+        loss_projector = mode_basis @ mode_basis.T
+        modal_observation = matrix @ mode_basis
+        modal_null_basis = NullspaceCertificate(modal_observation).null_basis
+        basis = mode_basis @ modal_null_basis
+        modal_row_basis = np.linalg.qr(modal_observation.T, mode="reduced")[0]
+        row_basis = mode_basis @ modal_row_basis
+        injection_basis = loss_projector @ matrix.T
     if gain_kind not in {"dense", "mass-adjoint", "mass-adjoint-constant"}:
         raise ValueError(f"unknown gain kind: {gain_kind}")
     if gain_kind.startswith("mass-adjoint") and not 0.0 < gain_trust_ratio < 1.0:
@@ -368,7 +385,9 @@ def _build_models(
                 nn.init.zeros_(self.network[-1].bias)
             self.register_buffer(
                 "base_gain",
-                torch.as_tensor(base_gain * matrix.T / grid.h, dtype=torch.float32),
+                torch.as_tensor(
+                    base_gain * injection_basis / grid.h, dtype=torch.float32
+                ),
             )
             self.register_buffer(
                 "base_gain_norm",
@@ -376,7 +395,11 @@ def _build_models(
             )
             self.register_buffer(
                 "injection_basis",
-                torch.as_tensor(matrix.T / grid.h, dtype=torch.float32),
+                torch.as_tensor(injection_basis / grid.h, dtype=torch.float32),
+            )
+            self.register_buffer(
+                "gain_projector",
+                torch.as_tensor(loss_projector, dtype=torch.float32),
             )
             self.gain_trust_ratio = gain_trust_ratio
             self.gain_kind = gain_kind
@@ -390,10 +413,9 @@ def _build_models(
                 return self.injection_basis[None, :, :] * sensor_gain[:, None, :]
             raw = raw.reshape(-1, n, q)
             delta = gain_scale * torch.tanh(raw)
+            delta = torch.matmul(self.gain_projector[None, :, :], delta)
             if self.gain_trust_ratio > 0.0:
-                delta_norm = torch.linalg.vector_norm(
-                    delta, dim=(1, 2), keepdim=True
-                )
+                delta_norm = torch.linalg.vector_norm(delta, dim=(1, 2), keepdim=True)
                 limit = self.gain_trust_ratio * self.base_gain_norm
                 scale = limit / (limit + delta_norm)
                 delta = scale * delta
@@ -440,6 +462,11 @@ def _build_models(
             self.register_buffer(
                 "row_basis", torch.as_tensor(row_basis, dtype=torch.float32)
             )
+            self.register_buffer(
+                "loss_projector",
+                torch.as_tensor(loss_projector, dtype=torch.float32),
+            )
+            self.low_modes = low_modes
 
         def _rotate(
             self,
@@ -479,17 +506,12 @@ def _build_models(
                 if self.certificate_kind == "triangular":
                     scale_lower *= 1.0 + self.shear_norm_limit
                     scale_upper /= 1.0 + self.shear_norm_limit
-                scale_fraction = (1.0 - scale_lower) / (
-                    scale_upper - scale_lower
-                )
+                scale_fraction = (1.0 - scale_lower) / (scale_upper - scale_lower)
                 identity_logit = float(np.log(scale_fraction / (1.0 - scale_fraction)))
                 scales = scale_lower + (scale_upper - scale_lower) * torch.sigmoid(
-                    identity_logit
-                    + certificate_scale * raw[:, : self.null_dimension]
+                    identity_logit + certificate_scale * raw[:, : self.null_dimension]
                 )
-                angle_end = (
-                    self.null_dimension + self.mixing_layers * self.pair_count
-                )
+                angle_end = self.null_dimension + self.mixing_layers * self.pair_count
                 angles = (np.pi / 4.0) * torch.tanh(
                     certificate_scale
                     * raw[:, self.null_dimension : angle_end].reshape(
@@ -500,9 +522,7 @@ def _build_models(
                 if self.certificate_kind == "triangular":
                     shear_candidate = torch.tanh(
                         certificate_scale
-                        * raw[:, angle_end:].reshape(
-                            -1, self.null_dimension, q
-                        )
+                        * raw[:, angle_end:].reshape(-1, self.null_dimension, q)
                     )
                     shear_squared_norm = torch.sum(
                         shear_candidate**2, dim=(1, 2), keepdim=True
@@ -578,14 +598,16 @@ def _joint_loss_components(
     stable_target = torch.bmm(target_maps[nu_indices], transformed[:, :, None]).squeeze(
         -1
     )
-    residual = next_transformed - stable_target
-    error_squared_mass = grid.h * torch.sum(errors**2, dim=1)
+    projector = certificate.loss_projector
+    residual = (next_transformed - stable_target) @ projector
+    projected_errors = errors @ projector
+    projected_transformed = transformed @ projector
+    error_squared_mass = grid.h * torch.sum(projected_errors**2, dim=1)
     stable_squared_mass = grid.h * torch.sum(residual**2, dim=1)
     stable_raw_loss = torch.mean(stable_squared_mass)
     if stable_normalization == "error-time":
         stable_loss = torch.mean(
-            stable_squared_mass
-            / (samples["dt"] ** 2 * (error_squared_mass + 1.0e-8))
+            stable_squared_mass / (samples["dt"] ** 2 * (error_squared_mass + 1.0e-8))
         )
     elif stable_normalization == "none":
         stable_loss = stable_raw_loss
@@ -604,13 +626,13 @@ def _joint_loss_components(
     generator = torch.bmm(
         target_generators[nu_indices], transformed[:, :, None]
     ).squeeze(-1)
-    defect_residual = directional - generator
+    defect_residual = (directional - generator) @ projector
     defect_squared_mass = grid.h * torch.sum(defect_residual**2, dim=1)
     defect_loss = torch.mean(defect_squared_mass / (error_squared_mass + 1.0e-8))
 
     error_norm = torch.sqrt(error_squared_mass + 1.0e-12)
     transformed_norm = torch.sqrt(
-        grid.h * torch.sum(transformed**2, dim=1) + 1.0e-12
+        grid.h * torch.sum(projected_transformed**2, dim=1) + 1.0e-12
     )
     lower_violation = torch.relu(lower_lipschitz * error_norm - transformed_norm)
     upper_violation = torch.relu(transformed_norm - upper_lipschitz * error_norm)
@@ -658,9 +680,7 @@ def _tensorize_samples(
         "nu_indices": torch.as_tensor(
             sample_set.nu_indices, dtype=torch.long, device=device
         ),
-        "times": torch.as_tensor(
-            sample_set.times, dtype=torch.float32, device=device
-        ),
+        "times": torch.as_tensor(sample_set.times, dtype=torch.float32, device=device),
         "laplacian": torch.as_tensor(
             grid.laplacian, dtype=torch.float32, device=device
         ),
@@ -702,6 +722,7 @@ def _train_one(
     gradient_clip_norm: float = 0.0,
     gain_trust_ratio: float = 0.0,
     gain_kind: str = "dense",
+    low_modes: int | None = None,
 ) -> tuple[object, object, dict[str, float | int]]:
     torch.manual_seed(seed)
     if device.startswith("cuda"):
@@ -720,6 +741,7 @@ def _train_one(
         shear_norm_limit=shear_norm_limit,
         gain_trust_ratio=gain_trust_ratio,
         gain_kind=gain_kind,
+        low_modes=low_modes,
     )
     gain.to(device)
     certificate.to(device)
@@ -949,8 +971,13 @@ def _validation_loss(
 
 def _ratio_summary(values: np.ndarray) -> dict[str, float | int]:
     if values.size == 0:
-        return {"count": 0, "rms": float("nan"), "median": float("nan"),
-                "p95": float("nan"), "max": float("nan")}
+        return {
+            "count": 0,
+            "rms": float("nan"),
+            "median": float("nan"),
+            "p95": float("nan"),
+            "max": float("nan"),
+        }
     return {
         "count": int(values.size),
         "rms": float(np.sqrt(np.mean(values**2))),
@@ -992,9 +1019,7 @@ def _defect_audit(
     count = samples["states"].shape[0]
     with torch.enable_grad():
         for start in range(0, count, batch_size):
-            indices = torch.arange(
-                start, min(start + batch_size, count), device=device
-            )
+            indices = torch.arange(start, min(start + batch_size, count), device=device)
             states = samples["states"][indices]
             estimates = samples["estimates"][indices]
             measurements = samples["measurements"][indices]
@@ -1038,7 +1063,9 @@ def _defect_audit(
             identity_generator = torch.bmm(
                 target_generators_tensor[nu_indices], errors[:, :, None]
             ).squeeze(-1)
-            error_squared_mass = grid.h * torch.sum(errors**2, dim=1)
+            projector = certificate.loss_projector
+            projected_errors = errors @ projector
+            error_squared_mass = grid.h * torch.sum(projected_errors**2, dim=1)
 
             def relative_norm(
                 residual: object, denominator: object = error_squared_mass
@@ -1047,20 +1074,24 @@ def _defect_audit(
                 return torch.sqrt(squared_mass / (denominator + 1.0e-8))
 
             ratios.append(
-                relative_norm(directional - generator).detach().cpu().numpy()
-            )
-            identity_ratios.append(
-                relative_norm(error_rhs - identity_generator).detach().cpu().numpy()
-            )
-            no_correction_ratios.append(
-                relative_norm(directional_no_correction - generator)
+                relative_norm((directional - generator) @ projector)
                 .detach()
                 .cpu()
                 .numpy()
             )
-            error_norms.append(
-                torch.sqrt(error_squared_mass).detach().cpu().numpy()
+            identity_ratios.append(
+                relative_norm((error_rhs - identity_generator) @ projector)
+                .detach()
+                .cpu()
+                .numpy()
             )
+            no_correction_ratios.append(
+                relative_norm((directional_no_correction - generator) @ projector)
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            error_norms.append(torch.sqrt(error_squared_mass).detach().cpu().numpy())
             innovation_norms.append(
                 torch.linalg.vector_norm(innovations, dim=1).detach().cpu().numpy()
             )
@@ -1068,7 +1099,10 @@ def _defect_audit(
                 torch.mean(
                     (torch.abs(torch.tanh(raw_gain)) >= 0.95).to(torch.float32),
                     dim=1,
-                ).detach().cpu().numpy()
+                )
+                .detach()
+                .cpu()
+                .numpy()
             )
             gain_deviation_ratios.append(
                 (
@@ -1143,6 +1177,93 @@ def _defect_audit(
         ),
         "all_sample_max_gates_passed": bool(
             all(item["sample_max_gate_passed"] for item in by_nu.values())
+        ),
+    }
+
+
+def _tail_audit(
+    torch: object,
+    gain: object,
+    sample_set: JointSampleSet,
+    grid: AllenCahnGrid,
+    matrix: np.ndarray,
+    *,
+    low_modes: int,
+    device: str,
+    batch_size: int = 512,
+) -> dict[str, object]:
+    """Compute the low/high decomposition and sampled tail inequality terms."""
+
+    samples = _tensorize_samples(torch, sample_set, grid, device)
+    matrix_tensor = torch.as_tensor(matrix, dtype=torch.float32, device=device)
+    correction_rows: list[np.ndarray] = []
+    count = sample_set.states.shape[0]
+    with torch.no_grad():
+        for start in range(0, count, batch_size):
+            stop = min(start + batch_size, count)
+            estimates = samples["estimates"][start:stop]
+            measurements = samples["measurements"][start:stop]
+            nus = samples["nus"][start:stop]
+            features, innovations = _feature_tensor(
+                torch, estimates, measurements, nus, matrix_tensor, grid.h
+            )
+            gains = gain(features)
+            correction_rows.append(
+                torch.bmm(gains, innovations[:, :, None]).squeeze(-1).cpu().numpy()
+            )
+    corrections = np.concatenate(correction_rows)
+    errors = sample_set.estimates - sample_set.states
+    by_nu: dict[str, object] = {}
+    for nu_index, nu in enumerate(sample_set.nu_values):
+        mask = sample_set.nu_indices == nu_index
+        audit = audit_high_frequency_tail(
+            grid,
+            nu,
+            sample_set.states[mask],
+            errors[mask],
+            corrections[mask],
+            mode_count=low_modes,
+        )
+        forcing = audit.low_to_tail_coupling_norm + audit.correction_tail_norm
+        damping = audit.diffusion_margin * audit.tail_norm
+        tail_fraction = audit.tail_norm / (audit.total_norm + 1.0e-12)
+        forcing_ratio = forcing / (damping + 1.0e-12)
+        decomposition_residual = np.abs(
+            audit.total_norm**2 - audit.low_norm**2 - audit.tail_norm**2
+        )
+        by_nu[f"{nu:.6g}"] = {
+            "diffusion_margin": audit.diffusion_margin,
+            "low_norm": _ratio_summary(audit.low_norm),
+            "tail_norm": _ratio_summary(audit.tail_norm),
+            "tail_fraction": _ratio_summary(tail_fraction),
+            "low_to_tail_coupling_norm": _ratio_summary(
+                audit.low_to_tail_coupling_norm
+            ),
+            "correction_tail_norm": _ratio_summary(audit.correction_tail_norm),
+            "forcing_to_tail_damping_ratio": _ratio_summary(forcing_ratio),
+            "sampled_decay_bound_fraction": float(np.mean(forcing < damping)),
+            "actual_tail_energy_decay_fraction": float(
+                np.mean(audit.energy_rate < 0.0)
+            ),
+            "dissipativity_violation_max": (audit.dissipativity_violation_max),
+            "tail_inequality_residual_max": audit.inequality_residual_max,
+            "orthogonal_decomposition_residual_max": float(
+                np.max(decomposition_residual)
+            ),
+        }
+    return {
+        "low_modes": low_modes,
+        "sample_count": count,
+        "by_nu": by_nu,
+        "all_diffusion_margins_positive": bool(
+            all(item["diffusion_margin"] > 0.0 for item in by_nu.values())
+        ),
+        "all_tail_inequalities_passed": bool(
+            all(
+                item["tail_inequality_residual_max"] <= 1.0e-8
+                and item["dissipativity_violation_max"] <= 1.0e-8
+                for item in by_nu.values()
+            )
         ),
     }
 
@@ -1224,7 +1345,11 @@ def _audit(
     with torch.no_grad():
         transformed = certificate(state_tensor, error_tensor).cpu().numpy()
         zero = certificate(state_tensor, torch.zeros_like(error_tensor)).cpu().numpy()
+        projector = certificate.loss_projector.cpu().numpy()
     direction = np.linalg.norm((transformed - errors) @ matrix.T, axis=1)
+    tail_identity = np.linalg.norm(
+        (transformed - errors) @ (np.eye(grid.n) - projector), axis=1
+    )
     minimum_singular: list[float] = []
     maximum_singular: list[float] = []
     for index in range(states.shape[0]):
@@ -1242,6 +1367,7 @@ def _audit(
     return {
         "max_zero_fiber_residual": float(np.max(np.linalg.norm(zero, axis=1))),
         "max_direction_residual": float(np.max(direction)),
+        "max_tail_identity_residual": float(np.max(tail_identity)),
         "min_jacobian_singular_value": min(minimum_singular),
         "max_jacobian_singular_value": max(maximum_singular),
     }
@@ -1285,6 +1411,7 @@ def run(
     selection_mode: str = "rollout-first",
     run_defect_audit: bool = False,
     checkpoint_dir: Path | None = None,
+    low_modes: int | None = None,
 ) -> dict[str, object]:
     if checkpoint_dir is not None:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1294,18 +1421,14 @@ def run(
         matrix = local_average_matrix(grid, INTERVALS)
         train_cases = _split_cases("train", grid_size)
         validation_cases = _split_cases("validation", grid_size)
-        train = _collect_samples(
-            train_cases, grid, matrix, base_gain=base_gain
-        )
+        train = _collect_samples(train_cases, grid, matrix, base_gain=base_gain)
         validation = _collect_samples(
             validation_cases, grid, matrix, base_gain=base_gain
         )
         test_cases = _split_cases("test", grid_size)
         selection_cases = validation_cases[:selection_limit]
         baseline_selection = [
-            _simulate_fixed_gain(
-                grid, matrix, case, gain=selection_baseline_gain
-            )
+            _simulate_fixed_gain(grid, matrix, case, gain=selection_baseline_gain)
             for case in selection_cases
         ]
         models: dict[int, tuple[object, object]] = {}
@@ -1345,6 +1468,7 @@ def run(
                 gradient_clip_norm=gradient_clip_norm,
                 gain_trust_ratio=gain_trust_ratio,
                 gain_kind=gain_kind,
+                low_modes=low_modes,
             )
             validation_loss = _validation_loss(
                 torch,
@@ -1367,9 +1491,7 @@ def run(
                 _simulate(torch, gain, device, grid, matrix, case)
                 for case in selection_cases
             ]
-            certificate_audit = _audit(
-                torch, certificate, matrix, grid, device
-            )
+            certificate_audit = _audit(torch, certificate, matrix, grid, device)
             seed_results.append(
                 {
                     "seed": seed,
@@ -1394,6 +1516,7 @@ def run(
             >= lower_lipschitz - 1.0e-5
             and item["certificate_audit"]["max_zero_fiber_residual"] <= 1.0e-7
             and item["certificate_audit"]["max_direction_residual"] <= 1.0e-7
+            and item["certificate_audit"]["max_tail_identity_residual"] <= 1.0e-7
         ]
         if selection_mode == "defect-first":
             selection_key = lambda item: (
@@ -1411,6 +1534,7 @@ def run(
         best_seed = int(best["seed"])
         gain, certificate = models[best_seed]
         defect_audits: dict[str, object] = {}
+        tail_audits: dict[str, object] = {}
         on_policy_validation_loss: dict[str, float] | None = None
         if run_defect_audit:
             train_policy = _collect_policy_samples(
@@ -1458,6 +1582,20 @@ def run(
                 )
                 for name, sample_set in audit_sets.items()
             }
+            if low_modes is not None:
+                tail_audits = {
+                    name: _tail_audit(
+                        torch,
+                        gain,
+                        sample_set,
+                        grid,
+                        matrix,
+                        low_modes=low_modes,
+                        device=device,
+                        batch_size=batch_size,
+                    )
+                    for name, sample_set in audit_sets.items()
+                }
         if checkpoint_dir is not None:
             torch.save(
                 {
@@ -1480,6 +1618,7 @@ def run(
                     "gain_trust_ratio": gain_trust_ratio,
                     "gain_reg_weight": gain_reg_weight,
                     "gain_kind": gain_kind,
+                    "low_modes": low_modes,
                 },
                 checkpoint_dir / f"grid-{grid_size}__seed-{best_seed}.pt",
             )
@@ -1514,6 +1653,7 @@ def run(
             "bi_weight": bi_weight,
             "gain_reg_weight": gain_reg_weight,
             "gain_kind": gain_kind,
+            "low_modes": low_modes,
             "lower_lipschitz": lower_lipschitz,
             "upper_lipschitz": upper_lipschitz,
             "certificate_kind": certificate_kind,
@@ -1544,6 +1684,7 @@ def run(
             ),
             "certificate_audit": best["certificate_audit"],
             "defect_audits": defect_audits,
+            "tail_audits": tail_audits,
             "on_policy_validation_loss": on_policy_validation_loss,
         }
         results.append(grid_result)
@@ -1569,6 +1710,7 @@ def run(
         "bi_weight": bi_weight,
         "gain_reg_weight": gain_reg_weight,
         "gain_kind": gain_kind,
+        "low_modes": low_modes,
         "lower_lipschitz": lower_lipschitz,
         "upper_lipschitz": upper_lipschitz,
         "certificate_kind": certificate_kind,
@@ -1641,6 +1783,11 @@ def main() -> None:
         choices=("dense", "mass-adjoint", "mass-adjoint-constant"),
         default="dense",
     )
+    parser.add_argument(
+        "--low-modes",
+        type=int,
+        help="restrict certificate, losses, and correction injection to the first modes",
+    )
     parser.add_argument("--selection-limit", type=int, default=48)
     parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
     parser.add_argument(
@@ -1678,6 +1825,8 @@ def main() -> None:
         0.0 < args.gain_trust_ratio < 1.0
     ):
         raise SystemExit("mass-adjoint gain requires 0 < trust ratio < 1")
+    if args.low_modes is not None and args.low_modes < 1:
+        raise SystemExit("--low-modes must be positive")
     if args.certificate_kind in {"givens", "triangular"}:
         if args.mixing_layers < 1:
             raise SystemExit("mixed certificate requires --mixing-layers >= 1")
@@ -1734,6 +1883,7 @@ def main() -> None:
         selection_mode=args.selection_mode,
         run_defect_audit=args.run_defect_audit,
         checkpoint_dir=args.checkpoint_dir,
+        low_modes=args.low_modes,
     )
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"grid_count": len(result["results"]), "device": args.device}))
