@@ -5,6 +5,41 @@
 - 建立实验工程。
 # Changelog
 
+- Planned the R5 observation-injection repair: a five-sensor certified baseline, a two-sensor
+  oblique modal injection feasibility gate, nonlinear/noise validation, and a training-only-after-
+  feasibility compute policy.
+- Added a general causal output-injection observer, unstable-mode observability diagnostics,
+  pole-placement/Riccati/LMI modal designs, physical-gain and transient metrics, a five-sensor global
+  semidiscrete margin audit, and the paired nonlinear/noise CPU experiment entry point.
+- Added bounded low-mode joint training around the LMI output injection and its balanced invertible
+  metric transform. The trainer uses direct contraction as the primary loss, target-dynamics defect as
+  an auxiliary loss, structural invertibility bounds, on-policy refresh, fourth-mode and near-unobserved
+  stress cases, and validation-only model selection before test/noise evaluation.
+- Froze a three-configuration validation-only GPU screen so gain-only, balanced-joint, and flexible-
+  joint residuals can be selected without test leakage before any multi-grid expansion.
+- Regularized the zero-initialized gain-residual norm and added a pre-update finite-gradient gate after
+  the first remote smoke exposed an undefined zero-norm derivative.
+- Completed the CPU matrix/nonlinear gate and the frozen RTX 2060 joint-training screen. Five evenly
+  distributed sensors passed all nine global semidiscrete certificate checks and nonlinear/noise
+  validation. The original two sensors were linearly stabilizable with a general output injection, but
+  every trained configuration failed both the positive-worst-contraction and nu=0.005 online-
+  no-regression gates, so multi-grid expansion and test evaluation remained locked.
+- Added a fixed-total-observation-length comparison for three and four sensors. The experiment freezes
+  geometry selection on coarse-grid linear diagnostics, audits the three-sensor rank obstruction and
+  transformed finite-trajectory contraction separately, selects the smallest qualifying four-sensor
+  mass-adjoint gain, and unlocks test trajectories only after all validation gates pass.
+- Completed the deterministic three/four-sensor study and an exact independent reproduction. Four
+  interior sensors with total observation length 0.20 and mass-adjoint gain 0.50 passed all nine global
+  semidiscrete margin checks. Three sensors cannot pass that global rank gate at nu=0.005, but a general
+  modal injection passed every declared validation and locked-test transformed-contraction, online, and
+  noise gate without GPU training.
+
+- Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
+  loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
+- Completed the RTX 2060 direct-contraction screen: the selected weight-10 model improved the worst
+  validation rate from -0.4810 to -0.4043 while preserving invertibility and online error, but did not
+  obtain a positive finite-sample validation margin.
+
 ## Unreleased
 
 - Added the R5-A Allen–Cahn reference model, discrete energy diagnostic, exact fixed-width local-average observations, and causal constant-gain nudging baseline.

@@ -258,6 +258,8 @@ def _collect_policy_samples(
     cases: list[object],
     grid: AllenCahnGrid,
     matrix: np.ndarray,
+    *,
+    noise: object = None,
 ) -> JointSampleSet:
     states: list[np.ndarray] = []
     estimates: list[np.ndarray] = []
@@ -268,7 +270,7 @@ def _collect_policy_samples(
     dt = float(OUTPUT_TIMES[1] - OUTPUT_TIMES[0])
     for case in cases:
         truth, estimate, observed, status = _policy_rollout(
-            torch, gain, device, grid, matrix, case
+            torch, gain, device, grid, matrix, case, noise=noise
         )
         if status != 0 or truth.shape[0] != OUTPUT_TIMES.size:
             raise RuntimeError(f"on-policy rollout failed for {case.case_id}")
@@ -550,6 +552,8 @@ def _joint_loss_components(
     stable_normalization: str,
     stable_weight: float,
     defect_weight: float,
+    contraction_weight: float,
+    contraction_margin_ratio: float,
     bi_weight: float,
     gain_reg_weight: float,
     lower_lipschitz: float,
@@ -607,6 +611,15 @@ def _joint_loss_components(
     defect_residual = directional - generator
     defect_squared_mass = grid.h * torch.sum(defect_residual**2, dim=1)
     defect_loss = torch.mean(defect_squared_mass / (error_squared_mass + 1.0e-8))
+    contraction_metrics = _contraction_tensor_metrics(
+        torch,
+        transformed,
+        directional,
+        nus,
+        h=grid.h,
+        margin_ratio=contraction_margin_ratio,
+    )
+    contraction_loss = contraction_metrics["loss"]
 
     error_norm = torch.sqrt(error_squared_mass + 1.0e-12)
     transformed_norm = torch.sqrt(
@@ -622,6 +635,7 @@ def _joint_loss_components(
     total_loss = (
         stable_weight * stable_loss
         + defect_weight * defect_loss
+        + contraction_weight * contraction_loss
         + bi_weight * bi_loss
         + gain_reg_weight * gain_deviation_loss
     )
@@ -629,6 +643,7 @@ def _joint_loss_components(
         "stable": stable_loss,
         "stable_raw": stable_raw_loss,
         "defect": defect_loss,
+        "contraction": contraction_loss,
         "bi": bi_loss,
         "gain_deviation": gain_deviation_loss,
         "total": total_loss,
@@ -686,6 +701,8 @@ def _train_one(
     stable_normalization: str,
     stable_weight: float,
     defect_weight: float,
+    contraction_weight: float,
+    contraction_margin_ratio: float,
     bi_weight: float,
     gain_reg_weight: float,
     lower_lipschitz: float,
@@ -790,6 +807,8 @@ def _train_one(
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
+                contraction_weight=contraction_weight,
+                contraction_margin_ratio=contraction_margin_ratio,
                 bi_weight=bi_weight,
                 gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -847,6 +866,8 @@ def _train_one(
             stable_normalization=stable_normalization,
             stable_weight=stable_weight,
             defect_weight=defect_weight,
+            contraction_weight=contraction_weight,
+            contraction_margin_ratio=contraction_margin_ratio,
             bi_weight=bi_weight,
             gain_reg_weight=gain_reg_weight,
             lower_lipschitz=lower_lipschitz,
@@ -863,6 +884,7 @@ def _train_one(
             "stable_training_loss": final_losses["stable"],
             "stable_raw_training_loss": final_losses["stable_raw"],
             "defect_training_loss": final_losses["defect"],
+            "contraction_training_loss": final_losses["contraction"],
             "bi_training_loss": final_losses["bi"],
             "gain_deviation_training_loss": final_losses["gain_deviation"],
             "total_training_loss": final_losses["total"],
@@ -872,6 +894,8 @@ def _train_one(
             "stable_raw_final_last_batch_loss": history[-1]["stable_raw"],
             "defect_initial_last_batch_loss": history[0]["defect"],
             "defect_final_last_batch_loss": history[-1]["defect"],
+            "contraction_initial_last_batch_loss": history[0]["contraction"],
+            "contraction_final_last_batch_loss": history[-1]["contraction"],
             "bi_initial_last_batch_loss": history[0]["bi"],
             "bi_final_last_batch_loss": history[-1]["bi"],
             "gain_deviation_initial_last_batch_loss": history[0]["gain_deviation"],
@@ -887,6 +911,8 @@ def _train_one(
             "gain_trust_ratio": gain_trust_ratio,
             "gain_kind": gain_kind,
             "gain_reg_weight": gain_reg_weight,
+            "contraction_weight": contraction_weight,
+            "contraction_margin_ratio": contraction_margin_ratio,
         },
     )
 
@@ -903,6 +929,8 @@ def _validation_loss(
     stable_normalization: str,
     stable_weight: float,
     defect_weight: float,
+    contraction_weight: float,
+    contraction_margin_ratio: float,
     bi_weight: float,
     gain_reg_weight: float,
     lower_lipschitz: float,
@@ -936,6 +964,8 @@ def _validation_loss(
             stable_normalization=stable_normalization,
             stable_weight=stable_weight,
             defect_weight=defect_weight,
+            contraction_weight=contraction_weight,
+            contraction_margin_ratio=contraction_margin_ratio,
             bi_weight=bi_weight,
             gain_reg_weight=gain_reg_weight,
             lower_lipschitz=lower_lipschitz,
@@ -957,6 +987,208 @@ def _ratio_summary(values: np.ndarray) -> dict[str, float | int]:
         "median": float(np.median(values)),
         "p95": float(np.quantile(values, 0.95)),
         "max": float(np.max(values)),
+    }
+
+
+def _signed_summary(values: np.ndarray) -> dict[str, float | int]:
+    """Summarize signed sample values without hiding the worst case in an RMS."""
+    if values.size == 0:
+        return {
+            "count": 0,
+            "min": float("nan"),
+            "p05": float("nan"),
+            "median": float("nan"),
+            "mean": float("nan"),
+            "p95": float("nan"),
+            "max": float("nan"),
+            "positive_fraction": float("nan"),
+        }
+    return {
+        "count": int(values.size),
+        "min": float(np.min(values)),
+        "p05": float(np.quantile(values, 0.05)),
+        "median": float(np.median(values)),
+        "mean": float(np.mean(values)),
+        "p95": float(np.quantile(values, 0.95)),
+        "max": float(np.max(values)),
+        "positive_fraction": float(np.mean(values > 0.0)),
+    }
+
+
+def _contraction_tensor_metrics(
+    torch: object,
+    transformed: object,
+    directional: object,
+    nus: object,
+    *,
+    h: float,
+    margin_ratio: float,
+) -> dict[str, object]:
+    """Return the direct energy-contraction rate and its normalized hinge loss.
+
+    For ``z = T_phi(e)``, the reported rate is
+
+        - <z, d_t z>_M / ||z||_M^2.
+
+    A positive value is a finite-sample contraction margin.  The optional
+    requested margin is ``margin_ratio * nu * pi**2`` so it remains tied to the
+    first physical diffusion rate on every grid.
+    """
+    transformed_squared_mass = h * torch.sum(transformed**2, dim=1)
+    energy_pairing = h * torch.sum(transformed * directional, dim=1)
+    requested_margin = margin_ratio * nus * np.pi**2
+    denominator = transformed_squared_mass + 1.0e-8
+    rates = -energy_pairing / denominator
+    violation = torch.relu(
+        energy_pairing + requested_margin * transformed_squared_mass
+    )
+    loss = torch.mean(violation**2 / (transformed_squared_mass**2 + 1.0e-12))
+    return {
+        "rates": rates,
+        "requested_margin": requested_margin,
+        "transformed_squared_mass": transformed_squared_mass,
+        "energy_pairing": energy_pairing,
+        "loss": loss,
+    }
+
+
+def _contraction_audit(
+    torch: object,
+    gain: object,
+    certificate: object,
+    sample_set: JointSampleSet,
+    grid: AllenCahnGrid,
+    matrix: np.ndarray,
+    *,
+    margin_ratio: float,
+    device: str,
+    batch_size: int = 512,
+) -> dict[str, object]:
+    """Audit direct contraction of ``z=T_phi(e)`` on a finite trajectory set."""
+    samples = _tensorize_samples(torch, sample_set, grid, device)
+    matrix_tensor = torch.as_tensor(matrix, dtype=torch.float32, device=device)
+    rates: list[np.ndarray] = []
+    requested_margins: list[np.ndarray] = []
+    error_norms: list[np.ndarray] = []
+    transformed_norms: list[np.ndarray] = []
+    losses: list[tuple[int, float]] = []
+    count = samples["states"].shape[0]
+    with torch.enable_grad():
+        for start in range(0, count, batch_size):
+            indices = torch.arange(
+                start, min(start + batch_size, count), device=device
+            )
+            states = samples["states"][indices]
+            estimates = samples["estimates"][indices]
+            measurements = samples["measurements"][indices]
+            nus = samples["nus"][indices]
+            features, innovations = _feature_tensor(
+                torch, estimates, measurements, nus, matrix_tensor, grid.h
+            )
+            gains = gain(features)
+            correction = torch.bmm(gains, innovations[:, :, None]).squeeze(-1)
+            rhs_truth = _allen_cahn_rhs_tensor(
+                torch, grid, states, nus, samples["laplacian"]
+            )
+            rhs_estimate = _allen_cahn_rhs_tensor(
+                torch, grid, estimates, nus, samples["laplacian"]
+            )
+            errors = estimates - states
+            error_rhs = rhs_estimate + correction - rhs_truth
+
+            def transform(state: object, error: object) -> object:
+                return certificate(state, error)
+
+            transformed = certificate(states, errors)
+            _, directional = torch.autograd.functional.jvp(
+                transform,
+                (states, errors),
+                (rhs_truth, error_rhs),
+                create_graph=False,
+            )
+            metrics = _contraction_tensor_metrics(
+                torch,
+                transformed,
+                directional,
+                nus,
+                h=grid.h,
+                margin_ratio=margin_ratio,
+            )
+            batch_count = int(indices.shape[0])
+            rates.append(metrics["rates"].detach().cpu().numpy())
+            requested_margins.append(
+                metrics["requested_margin"].detach().cpu().numpy()
+            )
+            error_norms.append(
+                torch.sqrt(grid.h * torch.sum(errors**2, dim=1))
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            transformed_norms.append(
+                torch.sqrt(metrics["transformed_squared_mass"])
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            losses.append((batch_count, float(metrics["loss"].detach().cpu().item())))
+
+    rate_values = np.concatenate(rates)
+    margin_values = np.concatenate(requested_margins)
+    error_values = np.concatenate(error_norms)
+    transformed_values = np.concatenate(transformed_norms)
+    by_nu: dict[str, object] = {}
+    for nu_index, nu in enumerate(sample_set.nu_values):
+        mask = sample_set.nu_indices == nu_index
+        summary = _signed_summary(rate_values[mask])
+        requested_margin = float(margin_ratio * nu * np.pi**2)
+        by_nu[f"{nu:.6g}"] = {
+            **summary,
+            "requested_margin": requested_margin,
+            "requested_margin_fraction": float(
+                np.mean(rate_values[mask] >= requested_margin)
+            ),
+            "positive_worst_sample_margin": bool(summary["min"] > 0.0),
+            "requested_margin_passed": bool(summary["min"] >= requested_margin),
+        }
+    time_masks = {
+        "early": sample_set.times < 0.25,
+        "middle": (sample_set.times >= 0.25) & (sample_set.times < 0.75),
+        "late": sample_set.times >= 0.75,
+    }
+    lower_error, upper_error = np.quantile(error_values, [0.25, 0.75])
+    error_masks = {
+        "small": error_values <= lower_error,
+        "middle": (error_values > lower_error) & (error_values < upper_error),
+        "large": error_values >= upper_error,
+    }
+    total_weight = sum(weight for weight, _value in losses)
+    audit_loss = sum(weight * value for weight, value in losses) / total_weight
+    overall = _signed_summary(rate_values)
+    return {
+        "definition": "-<T_phi(e), d_t T_phi(e)>_M / ||T_phi(e)||_M^2",
+        "requested_margin_ratio": margin_ratio,
+        "overall": {
+            **overall,
+            "requested_margin_fraction": float(
+                np.mean(rate_values >= margin_values)
+            ),
+            "positive_worst_sample_margin": bool(overall["min"] > 0.0),
+            "requested_margin_passed": bool(np.all(rate_values >= margin_values)),
+        },
+        "by_nu": by_nu,
+        "by_time": {
+            name: _signed_summary(rate_values[mask])
+            for name, mask in time_masks.items()
+        },
+        "by_error_size": {
+            name: _signed_summary(rate_values[mask])
+            for name, mask in error_masks.items()
+        },
+        "error_norm": _ratio_summary(error_values),
+        "transformed_norm": _ratio_summary(transformed_values),
+        "normalized_hinge_loss": float(audit_loss),
+        "finite_sample_only": True,
     }
 
 
@@ -1284,6 +1516,9 @@ def run(
     gain_kind: str = "dense",
     selection_mode: str = "rollout-first",
     run_defect_audit: bool = False,
+    contraction_weight: float = 0.0,
+    contraction_margin_ratio: float = 0.0,
+    run_contraction_audit: bool = False,
     checkpoint_dir: Path | None = None,
 ) -> dict[str, object]:
     if checkpoint_dir is not None:
@@ -1329,6 +1564,8 @@ def run(
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
+                contraction_weight=contraction_weight,
+                contraction_margin_ratio=contraction_margin_ratio,
                 bi_weight=bi_weight,
                 gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -1357,6 +1594,8 @@ def run(
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
+                contraction_weight=contraction_weight,
+                contraction_margin_ratio=contraction_margin_ratio,
                 bi_weight=bi_weight,
                 gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
@@ -1367,6 +1606,22 @@ def run(
                 _simulate(torch, gain, device, grid, matrix, case)
                 for case in selection_cases
             ]
+            selection_contraction: dict[str, object] = {}
+            if selection_mode == "contraction-first":
+                selection_policy = _collect_policy_samples(
+                    torch, gain, device, selection_cases, grid, matrix
+                )
+                selection_contraction = _contraction_audit(
+                    torch,
+                    gain,
+                    certificate,
+                    selection_policy,
+                    grid,
+                    matrix,
+                    margin_ratio=contraction_margin_ratio,
+                    device=device,
+                    batch_size=batch_size,
+                )
             certificate_audit = _audit(
                 torch, certificate, matrix, grid, device
             )
@@ -1377,6 +1632,7 @@ def run(
                     "stable_validation_loss": validation_loss["stable"],
                     "stable_raw_validation_loss": validation_loss["stable_raw"],
                     "defect_validation_loss": validation_loss["defect"],
+                    "contraction_validation_loss": validation_loss["contraction"],
                     "bi_validation_loss": validation_loss["bi"],
                     "total_validation_loss": validation_loss["total"],
                     "selection_case_count": len(selection_replay),
@@ -1384,6 +1640,7 @@ def run(
                         selection_replay, "terminal_error_mass"
                     ),
                     "certificate_audit": certificate_audit,
+                    "selection_contraction_audit": selection_contraction,
                 }
             )
             models[seed] = (gain, certificate)
@@ -1405,14 +1662,23 @@ def run(
                 item["validation_median_terminal_error_mass"],
                 item["total_validation_loss"],
             )
+        elif selection_mode == "contraction-first":
+            selection_key = lambda item: (
+                -item["selection_contraction_audit"]["overall"]["min"],
+                -item["selection_contraction_audit"]["overall"]["p05"],
+                item["validation_median_terminal_error_mass"],
+            )
         else:
             raise ValueError(f"unknown selection mode: {selection_mode}")
         best = min(eligible or seed_results, key=selection_key)
         best_seed = int(best["seed"])
         gain, certificate = models[best_seed]
         defect_audits: dict[str, object] = {}
+        contraction_audits: dict[str, object] = {}
         on_policy_validation_loss: dict[str, float] | None = None
-        if run_defect_audit:
+        train_policy: JointSampleSet | None = None
+        validation_policy: JointSampleSet | None = None
+        if run_defect_audit or run_contraction_audit:
             train_policy = _collect_policy_samples(
                 torch, gain, device, train_cases, grid, matrix
             )
@@ -1430,13 +1696,17 @@ def run(
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
+                contraction_weight=contraction_weight,
+                contraction_margin_ratio=contraction_margin_ratio,
                 bi_weight=bi_weight,
                 gain_reg_weight=gain_reg_weight,
                 lower_lipschitz=lower_lipschitz,
                 upper_lipschitz=upper_lipschitz,
                 device=device,
             )
-            audit_sets = {
+        if run_defect_audit:
+            assert train_policy is not None and validation_policy is not None
+            defect_audit_sets = {
                 "fixed_gain_train": train,
                 "current_observer_train": train_policy,
                 "fixed_gain_validation": validation,
@@ -1456,7 +1726,42 @@ def run(
                     device=device,
                     batch_size=batch_size,
                 )
-                for name, sample_set in audit_sets.items()
+                for name, sample_set in defect_audit_sets.items()
+            }
+        if run_contraction_audit:
+            assert train_policy is not None and validation_policy is not None
+            noisy = lambda time, q=matrix.shape[0]: noise_waveform(
+                "common-sine", 0.01, q, time
+            )
+            noisy_validation_policy = _collect_policy_samples(
+                torch,
+                gain,
+                device,
+                validation_cases[:noise_limit],
+                grid,
+                matrix,
+                noise=noisy,
+            )
+            contraction_audit_sets = {
+                "fixed_gain_train": train,
+                "current_observer_train": train_policy,
+                "fixed_gain_validation": validation,
+                "current_observer_validation": validation_policy,
+                "noisy_current_observer_validation": noisy_validation_policy,
+            }
+            contraction_audits = {
+                name: _contraction_audit(
+                    torch,
+                    gain,
+                    certificate,
+                    sample_set,
+                    grid,
+                    matrix,
+                    margin_ratio=contraction_margin_ratio,
+                    device=device,
+                    batch_size=batch_size,
+                )
+                for name, sample_set in contraction_audit_sets.items()
             }
         if checkpoint_dir is not None:
             torch.save(
@@ -1480,6 +1785,8 @@ def run(
                     "gain_trust_ratio": gain_trust_ratio,
                     "gain_reg_weight": gain_reg_weight,
                     "gain_kind": gain_kind,
+                    "contraction_weight": contraction_weight,
+                    "contraction_margin_ratio": contraction_margin_ratio,
                 },
                 checkpoint_dir / f"grid-{grid_size}__seed-{best_seed}.pt",
             )
@@ -1511,6 +1818,8 @@ def run(
             "stable_normalization": stable_normalization,
             "stable_weight": stable_weight,
             "defect_weight": defect_weight,
+            "contraction_weight": contraction_weight,
+            "contraction_margin_ratio": contraction_margin_ratio,
             "bi_weight": bi_weight,
             "gain_reg_weight": gain_reg_weight,
             "gain_kind": gain_kind,
@@ -1544,6 +1853,7 @@ def run(
             ),
             "certificate_audit": best["certificate_audit"],
             "defect_audits": defect_audits,
+            "contraction_audits": contraction_audits,
             "on_policy_validation_loss": on_policy_validation_loss,
         }
         results.append(grid_result)
@@ -1566,6 +1876,8 @@ def run(
         "stable_normalization": stable_normalization,
         "stable_weight": stable_weight,
         "defect_weight": defect_weight,
+        "contraction_weight": contraction_weight,
+        "contraction_margin_ratio": contraction_margin_ratio,
         "bi_weight": bi_weight,
         "gain_reg_weight": gain_reg_weight,
         "gain_kind": gain_kind,
@@ -1583,6 +1895,7 @@ def run(
         "gain_trust_ratio": gain_trust_ratio,
         "selection_mode": selection_mode,
         "run_defect_audit": run_defect_audit,
+        "run_contraction_audit": run_contraction_audit,
         "refresh_interval": refresh_interval,
         "selection_limit": selection_limit,
         "selection_baseline_gain": selection_baseline_gain,
@@ -1624,6 +1937,8 @@ def main() -> None:
     )
     parser.add_argument("--stable-weight", type=float, default=1.0)
     parser.add_argument("--defect-weight", type=float, default=1.0)
+    parser.add_argument("--contraction-weight", type=float, default=0.0)
+    parser.add_argument("--contraction-margin-ratio", type=float, default=0.0)
     parser.add_argument("--bi-weight", type=float, default=1.0)
     parser.add_argument("--lower-lipschitz", type=float, default=0.5)
     parser.add_argument("--upper-lipschitz", type=float, default=2.0)
@@ -1645,10 +1960,11 @@ def main() -> None:
     parser.add_argument("--selection-baseline-gain", type=float, default=0.10)
     parser.add_argument(
         "--selection-mode",
-        choices=("rollout-first", "defect-first"),
+        choices=("rollout-first", "defect-first", "contraction-first"),
         default="rollout-first",
     )
     parser.add_argument("--run-defect-audit", action="store_true")
+    parser.add_argument("--run-contraction-audit", action="store_true")
     parser.add_argument("--checkpoint-dir", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -1656,8 +1972,15 @@ def main() -> None:
 
     if args.lambda_ratio <= 0.0:
         raise SystemExit("--lambda-ratio must be positive")
-    if args.stable_weight < 0.0 or args.defect_weight < 0.0 or args.bi_weight < 0.0:
+    if (
+        args.stable_weight < 0.0
+        or args.defect_weight < 0.0
+        or args.contraction_weight < 0.0
+        or args.bi_weight < 0.0
+    ):
         raise SystemExit("loss weights must be nonnegative")
+    if args.contraction_margin_ratio < 0.0:
+        raise SystemExit("--contraction-margin-ratio must be nonnegative")
     if args.lower_lipschitz <= 0.0 or args.upper_lipschitz < args.lower_lipschitz:
         raise SystemExit("lipschitz bounds must satisfy 0 < lower <= upper")
     if args.refresh_interval < 0:
@@ -1713,6 +2036,8 @@ def main() -> None:
         stable_normalization=args.stable_normalization,
         stable_weight=args.stable_weight,
         defect_weight=args.defect_weight,
+        contraction_weight=args.contraction_weight,
+        contraction_margin_ratio=args.contraction_margin_ratio,
         bi_weight=args.bi_weight,
         lower_lipschitz=args.lower_lipschitz,
         upper_lipschitz=args.upper_lipschitz,
@@ -1733,6 +2058,7 @@ def main() -> None:
         selection_baseline_gain=args.selection_baseline_gain,
         selection_mode=args.selection_mode,
         run_defect_audit=args.run_defect_audit,
+        run_contraction_audit=args.run_contraction_audit,
         checkpoint_dir=args.checkpoint_dir,
     )
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
