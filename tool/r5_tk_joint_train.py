@@ -317,6 +317,93 @@ def _target_operators(
     return np.asarray(generators, dtype=float), np.asarray(maps, dtype=float)
 
 
+def _target_diffusion_half_maps(
+    grid: AllenCahnGrid,
+    nu_values: tuple[float, ...],
+    dt: float,
+) -> np.ndarray:
+    """Return half-step diffusion maps used by the state-dependent targets."""
+    return np.asarray(
+        [expm(0.5 * dt * nu * grid.laplacian) for nu in nu_values],
+        dtype=float,
+    )
+
+
+def _target_generator_tensor(
+    torch: object,
+    target_kind: str,
+    states: object,
+    transformed: object,
+    nus: object,
+    laplacian: object,
+    lambda_ratio: float,
+) -> object:
+    """Evaluate the continuous stable target using the research-plan A, F and lambda."""
+    lam = lambda_ratio * nus[:, None] * np.pi**2
+    diffusion = nus[:, None] * (transformed @ laplacian.T)
+    if target_kind == "linear":
+        return diffusion - lam * transformed
+    if target_kind == "nonlinear":
+        reaction_increment = (
+            states + transformed - (states + transformed) ** 3
+            - states
+            + states**3
+        )
+        return diffusion + reaction_increment - (1.0 + lam) * transformed
+    if target_kind == "linearized":
+        reaction_increment = (1.0 - 3.0 * states**2) * transformed
+        return diffusion + reaction_increment - (1.0 + lam) * transformed
+    raise ValueError(f"unknown target kind: {target_kind}")
+
+
+def _target_step_tensor(
+    torch: object,
+    target_kind: str,
+    states: object,
+    next_states: object,
+    transformed: object,
+    nus: object,
+    nu_indices: object,
+    laplacian: object,
+    linear_maps: object,
+    diffusion_half_maps: object,
+    lambda_ratio: float,
+    dt: float,
+) -> object:
+    """Advance one target step; nonlinear reactions use Strang splitting and RK4."""
+    if target_kind == "linear":
+        return torch.bmm(
+            linear_maps[nu_indices], transformed[:, :, None]
+        ).squeeze(-1)
+
+    half_maps = diffusion_half_maps[nu_indices]
+    value = torch.bmm(half_maps, transformed[:, :, None]).squeeze(-1)
+    midpoint_states = 0.5 * (states + next_states)
+    lam = lambda_ratio * nus[:, None] * np.pi**2
+
+    def reaction(candidate: object) -> object:
+        if target_kind == "nonlinear":
+            increment = (
+                midpoint_states
+                + candidate
+                - (midpoint_states + candidate) ** 3
+                - midpoint_states
+                + midpoint_states**3
+            )
+        elif target_kind == "linearized":
+            increment = (1.0 - 3.0 * midpoint_states**2) * candidate
+        else:
+            raise ValueError(f"unknown target kind: {target_kind}")
+        return increment - (1.0 + lam) * candidate
+
+    k1 = reaction(value)
+    k2 = reaction(value + 0.5 * dt * k1)
+    k3 = reaction(value + 0.5 * dt * k2)
+    k4 = reaction(value + dt * k3)
+    value = value + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    return torch.bmm(half_maps, value[:, :, None]).squeeze(-1)
+
+
 def grid_step(grid: AllenCahnGrid) -> float:
     return float(OUTPUT_TIMES[1] - OUTPUT_TIMES[0])
 
@@ -566,10 +653,13 @@ def _joint_loss_components(
     samples: dict[str, object],
     target_generators: object,
     target_maps: object,
+    target_diffusion_half_maps: object,
     grid: AllenCahnGrid,
     matrix: object,
     indices: object,
     *,
+    target_kind: str,
+    lambda_ratio: float,
     stable_normalization: str,
     stable_weight: float,
     defect_weight: float,
@@ -600,8 +690,19 @@ def _joint_loss_components(
     next_errors = next_estimates - next_states
     transformed = certificate(states, errors)
     next_transformed = certificate(next_states, next_errors)
-    stable_target = torch.bmm(target_maps[nu_indices], transformed[:, :, None]).squeeze(
-        -1
+    stable_target = _target_step_tensor(
+        torch,
+        target_kind,
+        states,
+        next_states,
+        transformed,
+        nus,
+        nu_indices,
+        laplacian,
+        target_maps,
+        target_diffusion_half_maps,
+        lambda_ratio,
+        samples["dt"],
     )
     projector = certificate.loss_projector
     residual = (next_transformed - stable_target) @ projector
@@ -628,9 +729,15 @@ def _joint_loss_components(
         (rhs_truth, error_rhs),
         create_graph=True,
     )
-    generator = torch.bmm(
-        target_generators[nu_indices], transformed[:, :, None]
-    ).squeeze(-1)
+    generator = _target_generator_tensor(
+        torch,
+        target_kind,
+        states,
+        transformed,
+        nus,
+        laplacian,
+        lambda_ratio,
+    )
     defect_residual = (directional - generator) @ projector
     defect_squared_mass = grid.h * torch.sum(defect_residual**2, dim=1)
     defect_loss = torch.mean(defect_squared_mass / (error_squared_mass + 1.0e-8))
@@ -719,6 +826,7 @@ def _train_one(
     gain_scale: float,
     certificate_scale: float,
     lambda_ratio: float,
+    target_kind: str,
     stable_normalization: str,
     stable_weight: float,
     defect_weight: float,
@@ -775,6 +883,11 @@ def _train_one(
         dtype=torch.float32,
         device=device,
     )
+    target_diffusion_half_maps_tensor = torch.as_tensor(
+        _target_diffusion_half_maps(grid, train.nu_values, train.dt),
+        dtype=torch.float32,
+        device=device,
+    )
     optimizer = torch.optim.Adam(
         (
             {"params": list(gain.parameters()), "lr": gain_learning_rate},
@@ -824,9 +937,12 @@ def _train_one(
                 samples,
                 target_generators_tensor,
                 target_maps_tensor,
+                target_diffusion_half_maps_tensor,
                 grid,
                 matrix_tensor,
                 indices,
+                target_kind=target_kind,
+                lambda_ratio=lambda_ratio,
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
@@ -883,9 +999,12 @@ def _train_one(
             samples,
             target_generators_tensor,
             target_maps_tensor,
+            target_diffusion_half_maps_tensor,
             grid,
             matrix_tensor,
             indices,
+            target_kind=target_kind,
+            lambda_ratio=lambda_ratio,
             stable_normalization=stable_normalization,
             stable_weight=stable_weight,
             defect_weight=defect_weight,
@@ -949,6 +1068,7 @@ def _validation_loss(
     matrix: np.ndarray,
     *,
     lambda_ratio: float,
+    target_kind: str,
     stable_normalization: str,
     stable_weight: float,
     defect_weight: float,
@@ -972,6 +1092,11 @@ def _validation_loss(
         dtype=torch.float32,
         device=device,
     )
+    target_diffusion_half_maps_tensor = torch.as_tensor(
+        _target_diffusion_half_maps(grid, validation.nu_values, validation.dt),
+        dtype=torch.float32,
+        device=device,
+    )
     with torch.enable_grad():
         indices = torch.arange(samples["states"].shape[0], device=device)
         components = _joint_loss_components(
@@ -981,9 +1106,12 @@ def _validation_loss(
             samples,
             target_generators_tensor,
             target_maps_tensor,
+            target_diffusion_half_maps_tensor,
             grid,
             torch.as_tensor(matrix, dtype=torch.float32, device=device),
             indices,
+            target_kind=target_kind,
+            lambda_ratio=lambda_ratio,
             stable_normalization=stable_normalization,
             stable_weight=stable_weight,
             defect_weight=defect_weight,
@@ -1229,6 +1357,7 @@ def _defect_audit(
     matrix: np.ndarray,
     *,
     lambda_ratio: float,
+    target_kind: str,
     lower_lipschitz: float,
     gain_scale: float,
     device: str,
@@ -1290,12 +1419,24 @@ def _defect_audit(
                 (rhs_truth, error_rhs_no_correction),
                 create_graph=False,
             )
-            generator = torch.bmm(
-                target_generators_tensor[nu_indices], transformed[:, :, None]
-            ).squeeze(-1)
-            identity_generator = torch.bmm(
-                target_generators_tensor[nu_indices], errors[:, :, None]
-            ).squeeze(-1)
+            generator = _target_generator_tensor(
+                torch,
+                target_kind,
+                states,
+                transformed,
+                nus,
+                samples["laplacian"],
+                lambda_ratio,
+            )
+            identity_generator = _target_generator_tensor(
+                torch,
+                target_kind,
+                states,
+                errors,
+                nus,
+                samples["laplacian"],
+                lambda_ratio,
+            )
             projector = certificate.loss_projector
             projected_errors = errors @ projector
             error_squared_mass = grid.h * torch.sum(projected_errors**2, dim=1)
@@ -1645,6 +1786,7 @@ def run(
     refresh_interval: int,
     selection_limit: int,
     selection_baseline_gain: float,
+    target_kind: str = "linear",
     certificate_kind: str = "diagonal",
     mixing_layers: int = 0,
     shear_norm_limit: float = 0.0,
@@ -1665,6 +1807,8 @@ def run(
     checkpoint_dir: Path | None = None,
     low_modes: int | None = None,
 ) -> dict[str, object]:
+    if target_kind not in {"linear", "linearized", "nonlinear"}:
+        raise ValueError(f"unknown target kind: {target_kind}")
     if checkpoint_dir is not None:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, object]] = []
@@ -1701,6 +1845,7 @@ def run(
                 gain_scale=gain_scale,
                 certificate_scale=certificate_scale,
                 lambda_ratio=lambda_ratio,
+                target_kind=target_kind,
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
@@ -1732,6 +1877,7 @@ def run(
                 grid,
                 matrix,
                 lambda_ratio=lambda_ratio,
+                target_kind=target_kind,
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
@@ -1837,6 +1983,7 @@ def run(
                 grid,
                 matrix,
                 lambda_ratio=lambda_ratio,
+                target_kind=target_kind,
                 stable_normalization=stable_normalization,
                 stable_weight=stable_weight,
                 defect_weight=defect_weight,
@@ -1865,6 +2012,7 @@ def run(
                     grid,
                     matrix,
                     lambda_ratio=lambda_ratio,
+                    target_kind=target_kind,
                     lower_lipschitz=lower_lipschitz,
                     gain_scale=gain_scale,
                     device=device,
@@ -1937,6 +2085,7 @@ def run(
                     "gain_scale": gain_scale,
                     "certificate_scale": certificate_scale,
                     "lambda_ratio": lambda_ratio,
+                    "target_kind": target_kind,
                     "gain_learning_rate": gain_learning_rate,
                     "certificate_learning_rate": certificate_learning_rate,
                     "gradient_clip_norm": gradient_clip_norm,
@@ -1971,6 +2120,7 @@ def run(
         grid_result = {
             "grid_size": grid_size,
             "lambda_ratio": lambda_ratio,
+            "target_kind": target_kind,
             "base_gain": base_gain,
             "gain_scale": gain_scale,
             "certificate_scale": certificate_scale,
@@ -2031,6 +2181,7 @@ def run(
     return {
         "kind": "r5-tk-joint-training",
         "lambda_ratio": lambda_ratio,
+        "target_kind": target_kind,
         "base_gain": base_gain,
         "gain_scale": gain_scale,
         "certificate_scale": certificate_scale,
@@ -2082,6 +2233,11 @@ def main() -> None:
     parser.add_argument("--noise-limit", type=int, default=12)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--lambda-ratio", type=float, default=0.5)
+    parser.add_argument(
+        "--target-kind",
+        choices=("linear", "linearized", "nonlinear"),
+        default="linear",
+    )
     parser.add_argument("--base-gain", type=float, default=0.02)
     parser.add_argument("--gain-scale", type=float, default=0.5)
     parser.add_argument("--certificate-scale", type=float, default=1.0)
@@ -2199,6 +2355,7 @@ def main() -> None:
         noise_limit=args.noise_limit,
         device=args.device,
         lambda_ratio=args.lambda_ratio,
+        target_kind=args.target_kind,
         base_gain=args.base_gain,
         gain_scale=args.gain_scale,
         certificate_scale=args.certificate_scale,

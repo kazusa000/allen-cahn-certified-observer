@@ -85,3 +85,9 @@
   comparator after the first structure screen exposed an incompatible gain-0.02 trust region.
 - Completed the calibrated R5 dynamics-defect repair screen on the RTX 2060; validation defect RMS
   improved by 10.5% but failed the frozen 50% progress gate, so no multi-grid expansion was run.
+- Added state-dependent stable targets that retain either the Allen--Cahn nonlinear increment or its
+  current-state Jacobian, with matched conservative decay, split-step target integration, and a
+  pre-registered comparison against the existing fixed linear target.
+- Completed the RTX 2060 state-dependent-target screen; both nonlinear targets slightly improved
+  online reconstruction but increased held-out dynamics defect, so the pre-registered expansion gates
+  failed and the route stopped before multi-grid training.
