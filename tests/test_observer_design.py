@@ -8,6 +8,7 @@ from allen_cahn_certified_observer import (
     linearized_error_matrix,
     local_average_matrix,
     mass_adjoint_injection,
+    normalized_modal_transform,
     pole_placement_modal_injection,
     symmetric_allen_cahn_margin,
     unstable_modal_system,
@@ -95,6 +96,14 @@ def test_lmi_design_meets_requested_rate_with_declared_condition_bound() -> None
     assert design.closed_loop_spectral_abscissa < 0.0
     assert design.modal_contraction_rate >= rate - 1e-7
     assert design.modal_metric_condition <= 256.0 + 1e-5
+
+    modal = unstable_modal_system(grid, 0.005, matrix)
+    transform = normalized_modal_transform(grid, modal, design.modal_metric)
+    singular_values = np.linalg.svd(transform, compute_uv=False)
+    assert singular_values[-1] * singular_values[0] == pytest.approx(1.0, abs=1e-10)
+    assert singular_values[0] / singular_values[-1] == pytest.approx(
+        design.transform_condition, rel=1e-8
+    )
 
 
 def test_general_output_injection_is_zero_at_zero_innovation() -> None:

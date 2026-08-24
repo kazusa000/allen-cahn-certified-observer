@@ -11,6 +11,12 @@
 - Added a general causal output-injection observer, unstable-mode observability diagnostics,
   pole-placement/Riccati/LMI modal designs, physical-gain and transient metrics, a five-sensor global
   semidiscrete margin audit, and the paired nonlinear/noise CPU experiment entry point.
+- Added bounded low-mode joint training around the LMI output injection and its balanced invertible
+  metric transform. The trainer uses direct contraction as the primary loss, target-dynamics defect as
+  an auxiliary loss, structural invertibility bounds, on-policy refresh, fourth-mode and near-unobserved
+  stress cases, and validation-only model selection before test/noise evaluation.
+- Froze a three-configuration validation-only GPU screen so gain-only, balanced-joint, and flexible-
+  joint residuals can be selected without test leakage before any multi-grid expansion.
 
 - Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
   loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.

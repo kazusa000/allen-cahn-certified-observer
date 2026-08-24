@@ -382,3 +382,36 @@ def finite_horizon_transient_amplification(
             best_value = value
             best_time = float(time)
     return best_value, best_time
+
+
+def normalized_modal_transform(
+    grid: AllenCahnGrid,
+    modal: UnstableModalSystem,
+    modal_metric: Array,
+) -> Array:
+    """Lift a balanced square root of a modal metric to the full grid.
+
+    Multiplying a Lyapunov metric by a positive scalar leaves its contraction
+    inequality unchanged. The balancing used here makes the smallest and largest
+    singular values reciprocal, avoiding an arbitrary overall scale in ``T_phi``.
+    """
+
+    metric = np.asarray(modal_metric, dtype=float)
+    if metric.shape != (modal.dimension, modal.dimension):
+        raise ValueError("modal_metric has the wrong shape")
+    metric = 0.5 * (metric + metric.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(metric)
+    if np.min(eigenvalues) <= 0.0:
+        raise ValueError("modal_metric must be positive definite")
+    scale = 1.0 / np.sqrt(float(np.min(eigenvalues) * np.max(eigenvalues)))
+    modal_transform = (
+        eigenvectors
+        @ np.diag(np.sqrt(scale * eigenvalues))
+        @ eigenvectors.T
+    )
+    projector = modal.modes @ modal.modes.T
+    return (
+        np.eye(grid.n)
+        - projector
+        + modal.modes @ modal_transform @ modal.modes.T
+    )
