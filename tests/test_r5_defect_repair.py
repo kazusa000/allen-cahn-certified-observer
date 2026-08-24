@@ -12,7 +12,9 @@ from r5_tk_joint_train import (
     JointSampleSet,
     _build_models,
     _concatenate_sample_sets,
+    _contraction_tensor_metrics,
     _ratio_summary,
+    _signed_summary,
 )
 
 from allen_cahn_certified_observer import AllenCahnGrid, local_average_matrix
@@ -50,6 +52,32 @@ def test_ratio_summary_reports_rms_and_tail() -> None:
     assert summary["rms"] == pytest.approx(np.sqrt(7.5))
     assert summary["median"] == pytest.approx(2.5)
     assert summary["max"] == pytest.approx(4.0)
+
+
+def test_signed_summary_preserves_worst_contraction_rate() -> None:
+    summary = _signed_summary(np.asarray([-0.5, 0.25, 1.0]))
+
+    assert summary["min"] == pytest.approx(-0.5)
+    assert summary["positive_fraction"] == pytest.approx(2.0 / 3.0)
+
+
+def test_direct_contraction_rate_matches_exponential_decay() -> None:
+    torch = pytest.importorskip("torch")
+    transformed = torch.tensor([[1.0, -2.0], [0.5, 0.25]])
+    directional = -2.0 * transformed
+    nus = torch.tensor([0.01, 0.02])
+
+    metrics = _contraction_tensor_metrics(
+        torch,
+        transformed,
+        directional,
+        nus,
+        h=0.25,
+        margin_ratio=1.0,
+    )
+
+    assert torch.allclose(metrics["rates"], torch.full((2,), 2.0))
+    assert metrics["loss"].item() == pytest.approx(0.0)
 
 
 def test_givens_certificate_is_identity_at_initialization_and_stays_bounded() -> None:

@@ -5,6 +5,9 @@
 - 建立实验工程。
 # Changelog
 
+- Added the R5 direct transformed-error contraction audit, checkpoint replay, contraction-aware joint
+  loss, finite-sample worst-margin diagnostics, and pre-registered GPU training screen.
+
 ## Unreleased
 
 - Added the R5-A Allen–Cahn reference model, discrete energy diagnostic, exact fixed-width local-average observations, and causal constant-gain nudging baseline.
