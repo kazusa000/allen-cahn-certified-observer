@@ -258,6 +258,46 @@ def _append_adversary_memory(
     return combined
 
 
+def _select_active_adversaries(
+    torch: object,
+    transform: object,
+    gain: object,
+    memory: dict[str, np.ndarray],
+    context: dict[str, object],
+    *,
+    keep_count: int,
+    device: str,
+) -> tuple[dict[str, np.ndarray], dict[str, float]]:
+    """Select the current worst constraints from the full exchange memory."""
+
+    count = int(memory["states"].shape[0])
+    if not 1 <= keep_count <= count:
+        raise ValueError("active keep_count must lie within the memory size")
+    states = torch.as_tensor(memory["states"], dtype=torch.float32, device=device)
+    errors = torch.as_tensor(memory["errors"], dtype=torch.float32, device=device)
+    rates = []
+    for start in range(0, count, 512):
+        components = _fiber_components(
+            torch,
+            transform,
+            gain,
+            states[start : start + 512],
+            errors[start : start + 512],
+            context,
+            create_graph=False,
+        )
+        rates.append(components["rates"].detach())
+    all_rates = torch.cat(rates)
+    active_indices = torch.topk(all_rates, keep_count, largest=False).indices
+    indices = active_indices.cpu().numpy()
+    return {
+        name: np.asarray(value)[indices].copy() for name, value in memory.items()
+    }, {
+        "memory_margin_min": float(torch.min(all_rates).cpu()) - ALPHA,
+        "active_margin_max": float(torch.max(all_rates[active_indices]).cpu()) - ALPHA,
+    }
+
+
 def _hard_point_neighborhood(
     torch: object,
     *,
@@ -532,7 +572,7 @@ def _train_seed(
     history: list[dict[str, float]] = []
     adversary_history: list[dict[str, object]] = []
     adversarial_samples: dict[int, dict[str, np.ndarray]] = {}
-    latest_adversarial_samples: dict[int, dict[str, np.ndarray]] = {}
+    active_adversarial_samples: dict[int, dict[str, np.ndarray]] = {}
     global_step = 0
 
     for epoch in range(epochs):
@@ -561,7 +601,6 @@ def _train_seed(
                     step_size=adversary_step_size,
                     device=device,
                 )
-                latest_adversarial_samples[n] = values
                 adversarial_samples[n] = _append_adversary_memory(
                     adversarial_samples.get(n),
                     values,
@@ -571,22 +610,26 @@ def _train_seed(
                 diagnostics["memory_count"] = int(
                     adversarial_samples[n]["states"].shape[0]
                 )
+                active, active_diagnostics = _select_active_adversaries(
+                    torch,
+                    transform,
+                    gain,
+                    adversarial_samples[n],
+                    contexts[n],
+                    keep_count=adversary_keep,
+                    device=device,
+                )
+                active_adversarial_samples[n] = active
+                diagnostics.update(active_diagnostics)
                 adversary_history.append(diagnostics)
         if set(adversarial_samples) != set(GRID_SIZES):
             raise RuntimeError("adversarial pools were not initialized")
-        adversarial_tensors = {
+        active_adversarial_tensors = {
             n: {
                 name: torch.as_tensor(value, dtype=torch.float32, device=device)
                 for name, value in values.items()
             }
-            for n, values in adversarial_samples.items()
-        }
-        latest_adversarial_tensors = {
-            n: {
-                name: torch.as_tensor(value, dtype=torch.float32, device=device)
-                for name, value in values.items()
-            }
-            for n, values in latest_adversarial_samples.items()
+            for n, values in active_adversarial_samples.items()
         }
 
         totals = {
@@ -637,34 +680,12 @@ def _train_seed(
             )
             anchor_states = states
             anchor_errors = errors
-            latest_count = adversary_keep // 2
-            memory_count = adversary_keep - latest_count
-            latest_indices = torch.randperm(
-                int(latest_adversarial_tensors[n]["states"].shape[0]),
-                device=device,
-            )[:latest_count]
-            memory_indices = torch.randint(
-                0,
-                int(adversarial_tensors[n]["states"].shape[0]),
-                (memory_count,),
-                device=device,
+            states = torch.cat(
+                (states, active_adversarial_tensors[n]["states"]), dim=0
             )
-            adversarial_states = torch.cat(
-                (
-                    latest_adversarial_tensors[n]["states"][latest_indices],
-                    adversarial_tensors[n]["states"][memory_indices],
-                ),
-                dim=0,
+            errors = torch.cat(
+                (errors, active_adversarial_tensors[n]["errors"]), dim=0
             )
-            adversarial_errors = torch.cat(
-                (
-                    latest_adversarial_tensors[n]["errors"][latest_indices],
-                    adversarial_tensors[n]["errors"][memory_indices],
-                ),
-                dim=0,
-            )
-            states = torch.cat((states, adversarial_states), dim=0)
-            errors = torch.cat((errors, adversarial_errors), dim=0)
             if n == 63:
                 states = torch.cat((states, hard_tensors["states"]), dim=0)
                 errors = torch.cat((errors, hard_tensors["errors"]), dim=0)
@@ -1042,7 +1063,7 @@ def run(
             "adversary_steps": adversary_steps,
             "adversary_step_size": adversary_step_size,
             "adversary_memory_limit": adversary_memory_limit,
-            "adversary_memory_sampling": "half_latest_half_history",
+            "adversary_memory_sampling": "current_worst_active_set",
             "rho": rho,
             "hidden_width": hidden_width,
             "hidden_layers": hidden_layers,

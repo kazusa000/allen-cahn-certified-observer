@@ -110,6 +110,8 @@
   inherited checkpoint function.
 - Corrected the min-max implementation to accumulate discovered adversarial
   constraints instead of replacing them at every refresh.
+- Completed the exchange step by re-evaluating the full adversarial memory and
+  training on its current worst active constraints instead of random history.
 - Kept the PDE, sensors, grids, transform architecture, invertibility bound, and
   locked-test policy unchanged.
 
