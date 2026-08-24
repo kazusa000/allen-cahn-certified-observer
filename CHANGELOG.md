@@ -24,6 +24,12 @@
   grid-63 random-collocation worst margin while passing every trajectory,
   structure, and online gate. Reclassified seed 1851 as calibration and froze
   a gain-versus-transform capacity attribution screen before any new split.
+- Completed the exact-commit RTX 2060 formal run and capacity attribution.
+  Every seed passed structure, online, all trajectory, and grids 31/127
+  collocation gates, but each missed one of 2048 fresh grid-63 low-mode
+  collocations. None of the transform-only, gain-only, or joint capacity
+  expansions met the frozen positive-buffer repair gate, so locked test stayed
+  untouched and the route ended as a strict validation failure.
 - Froze the next fresh-split joint experiment around the LMI transform:
   `T_phi(u,e)=T0[e+g_tilde(u,e)-g_tilde(u,0)]`, retaining the full nonlinear
   target and exactly four losses while enforcing global invertibility in
