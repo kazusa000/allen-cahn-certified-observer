@@ -13,6 +13,13 @@ from .linearization import (
     incremental_remainder,
     local_incremental_rhs,
 )
+from .local_certificate import (
+    LocalPartition,
+    mass_norm,
+    partition_samples,
+    summarize_local_region,
+    transition_counts,
+)
 from .observations import local_average_matrix
 from .observer import CausalNudging, ObserverRollout, simulate_causal_nudging
 from .solver import (
@@ -46,6 +53,11 @@ __all__ = [
     "incremental_remainder",
     "local_average_matrix",
     "local_incremental_rhs",
+    "LocalPartition",
+    "mass_norm",
+    "partition_samples",
+    "summarize_local_region",
+    "transition_counts",
     "noise_waveform",
     "simulate_causal_nudging",
     "simulate_learned_correction",

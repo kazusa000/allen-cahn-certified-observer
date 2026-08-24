@@ -46,3 +46,7 @@
   comparator after the first structure screen exposed an incompatible gain-0.02 trust region.
 - Completed the calibrated R5 dynamics-defect repair screen on the RTX 2060; validation defect RMS
   improved by 10.5% but failed the frozen 50% progress gate, so no multi-grid expansion was run.
+- Added the pre-registered R5 partitioned local-certificate definitions, strict worst-sample stability
+  margin, physical overlap neighborhoods, and trajectory-transition audit.
+- Added checkpoint replay tooling for per-region defect, contraction, invertibility, online-error,
+  physical-overlap, and trajectory-switching audits.
