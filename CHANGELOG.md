@@ -10,6 +10,10 @@
   audits, Jacobian/zero-fiber checks, validation-only model selection, locked test/noise
   evaluation, multi-grid expansion gates, checkpointing, and a dedicated command-line
   entry point for exact-commit RTX 2060 execution.
+- Completed the exact-commit RTX 2060 coarse-grid run. Learned `T_phi` materially reduced
+  held-out target-dynamics defect relative to gain-only training, but the selected joint
+  model missed the strict worst-sample contraction, fixed-baseline RMS-improvement, and
+  joint-synergy gates; test and finer grids therefore remained locked.
 - 建立实验工程。
 # Changelog
 
