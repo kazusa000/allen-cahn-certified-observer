@@ -407,6 +407,7 @@ def _train_seed(
     online_weight: float,
     transform_teacher_weight: float,
     gain_teacher_weight: float,
+    train_condition_branch: bool,
     error_scale: float,
     device: str,
     checkpoint_dir: Path,
@@ -444,11 +445,31 @@ def _train_seed(
         teacher_transform.parameters()
     ):
         parameter.requires_grad_(False)
+    if not train_condition_branch:
+        for parameter in transform.condition_layers.parameters():
+            parameter.requires_grad_(False)
     optimizer = torch.optim.Adam(
         [
-            {"params": gain.parameters(), "lr": gain_learning_rate},
-            {"params": transform.parameters(), "lr": transform_learning_rate},
+            {
+                "params": [
+                    parameter
+                    for parameter in gain.parameters()
+                    if parameter.requires_grad
+                ],
+                "lr": gain_learning_rate,
+            },
+            {
+                "params": [
+                    parameter
+                    for parameter in transform.parameters()
+                    if parameter.requires_grad
+                ],
+                "lr": transform_learning_rate,
+            },
         ]
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(epochs, 1), eta_min=0.0
     )
     contexts = {
         n: _torch_context(torch, n, device=device, dtype=torch.float32)
@@ -624,7 +645,12 @@ def _train_seed(
                     f"non-finite loss at seed={seed}, epoch={epoch + 1}"
                 )
             total.backward()
-            parameters = list(gain.parameters()) + list(transform.parameters())
+            parameters = [
+                parameter
+                for parameter in list(gain.parameters())
+                + list(transform.parameters())
+                if parameter.requires_grad
+            ]
             if any(
                 parameter.grad is not None
                 and not bool(torch.all(torch.isfinite(parameter.grad)))
@@ -649,10 +675,13 @@ def _train_seed(
             for name, value in values.items():
                 totals[name] += float(value.detach().cpu())
         global_step += steps_per_epoch
+        scheduler.step()
         record = {
             name: value / steps_per_epoch for name, value in totals.items()
         }
         record["constraint_multiplier"] = multiplier
+        record["gain_learning_rate"] = optimizer.param_groups[0]["lr"]
+        record["transform_learning_rate"] = optimizer.param_groups[1]["lr"]
         history.append(record)
         if epoch % 5 == 0 or epoch == epochs - 1:
             print(
@@ -715,6 +744,7 @@ def _train_seed(
             "online_weight": online_weight,
             "transform_teacher_weight": transform_teacher_weight,
             "gain_teacher_weight": gain_teacher_weight,
+            "train_condition_branch": train_condition_branch,
             "initial_checkpoint": str(initial_checkpoint),
         },
         checkpoint,
@@ -756,6 +786,7 @@ def run(
     online_weight: float,
     transform_teacher_weight: float,
     gain_teacher_weight: float,
+    train_condition_branch: bool,
     error_scale: float,
     device: str,
     checkpoint_dir: Path,
@@ -836,6 +867,7 @@ def run(
             online_weight=online_weight,
             transform_teacher_weight=transform_teacher_weight,
             gain_teacher_weight=gain_teacher_weight,
+            train_condition_branch=train_condition_branch,
             error_scale=error_scale,
             device=device,
             checkpoint_dir=checkpoint_dir,
@@ -943,6 +975,8 @@ def run(
             "online_weight": online_weight,
             "transform_teacher_weight": transform_teacher_weight,
             "gain_teacher_weight": gain_teacher_weight,
+            "train_condition_branch": train_condition_branch,
+            "learning_rate_schedule": "cosine_to_zero",
             "error_scale": error_scale,
             "validation_seed": validation_seed,
             "validation_count_per_grid": validation_count,
@@ -1002,6 +1036,7 @@ def main() -> None:
     parser.add_argument("--online-weight", type=float, default=0.2)
     parser.add_argument("--transform-teacher-weight", type=float, default=0.5)
     parser.add_argument("--gain-teacher-weight", type=float, default=5.0)
+    parser.add_argument("--train-condition-branch", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -1113,6 +1148,7 @@ def main() -> None:
         online_weight=args.online_weight,
         transform_teacher_weight=args.transform_teacher_weight,
         gain_teacher_weight=args.gain_teacher_weight,
+        train_condition_branch=args.train_condition_branch,
         error_scale=args.error_scale,
         device=args.device,
         checkpoint_dir=args.checkpoint_dir,
