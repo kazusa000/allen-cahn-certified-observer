@@ -299,7 +299,9 @@ def main() -> None:
         raise SystemExit("CUDA requested but torch.cuda.is_available() is false")
     if args.device.startswith("cuda"):
         torch.cuda.set_device(0)
-        torch.empty(1, device=args.device)
+        warmup = torch.ones((1, 1), device=args.device, requires_grad=True)
+        (warmup @ warmup).sum().backward()
+        torch.cuda.synchronize()
     result = run(
         torch,
         seeds=args.seeds,
