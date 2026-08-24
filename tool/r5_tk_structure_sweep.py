@@ -75,7 +75,7 @@ def main() -> None:
                 noise_limit=4,
                 device=args.device,
                 lambda_ratio=0.1,
-                base_gain=0.02,
+                base_gain=0.10,
                 gain_scale=float(configuration["gain_scale"]),
                 certificate_scale=1.0,
                 stable_normalization="error-time",

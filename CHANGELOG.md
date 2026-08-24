@@ -42,3 +42,5 @@
   gains for the formal screen, matching the correction-operator form declared in the research plan.
 - Removed the triangular transform's non-smooth zero-norm second derivative and added immediate
   non-finite loss/gradient checks after it was found to contaminate preliminary online rollouts.
+- Aligned the stage-two constant correction initialization with the frozen gain-0.10 validation
+  comparator after the first structure screen exposed an incompatible gain-0.02 trust region.
