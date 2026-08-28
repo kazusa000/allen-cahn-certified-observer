@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reorganized reports so the active directory contains only the direct-fiber route; moved shared
+  pre-split R5 reports to `archive/report/r5-legacy/` without changing their content.
 - Completed the practical adversarial-repair target: the selected joint
   `B+T_phi` checkpoint passed collocation, trajectory, online, and structural
   gates on grids 31, 63, and 127, with worst margins `+0.12595`, `+0.02156`,
