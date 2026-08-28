@@ -1,6 +1,6 @@
-# Allen-Cahn Certified Observer
+# Allen-Cahn Direct Contraction Observer
 
-High-accuracy Allen-Cahn solver and certified nonlinear observer correction under partial observations.
+High-accuracy Allen-Cahn solver and direct-contraction nonlinear observer correction under partial observations.
 
 ## 入口
 

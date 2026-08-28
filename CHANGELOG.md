@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Renamed the Project 1 experiment entry to `03-allen-cahn-direct-contraction-observer` so the
+  repository name matches the evidence-supported direct-contraction route rather than implying a
+  completed global certificate.
 - Reorganized reports so the active directory contains only the direct-fiber route; moved shared
   pre-split R5 reports to `archive/report/r5-legacy/` without changing their content.
 - Completed the practical adversarial-repair target: the selected joint
