@@ -11,27 +11,8 @@ from r5_g_generalization_audit import _validate_unlock
 
 from allen_cahn_certified_observer import (
     PracticalGateThresholds,
-    adaptive_sensor_counts,
     generalization_gates,
-    unstable_mode_count,
 )
-
-
-@pytest.mark.parametrize(
-    ("nu", "unstable", "primary", "control"),
-    [
-        (0.005, 4, 3, 4),
-        (0.0075, 3, 2, 3),
-        (0.01, 3, 2, 3),
-        (0.015, 2, 1, 2),
-        (0.02, 2, 1, 2),
-    ],
-)
-def test_sensor_count_tracks_unstable_modes(
-    nu: float, unstable: int, primary: int, control: int
-) -> None:
-    assert unstable_mode_count(nu) == unstable
-    assert adaptive_sensor_counts(nu) == (primary, control)
 
 
 def _rate(*, fraction: float, p01: float, worst: float) -> dict[str, float]:

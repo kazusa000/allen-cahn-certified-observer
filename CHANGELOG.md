@@ -2,13 +2,12 @@
 
 ## Unreleased
 
-- Froze the R5-G adaptive-sensor generalization audit. The current three-sensor checkpoint is evaluated
-  without optimization on fresh seeds and unseen grids, while later parameter experiments use one fewer
-  sensor than the corresponding number of unstable modes. Added separate strict-certificate metrics and
-  a deliberately tolerant practical gate so isolated tail points do not alone block empirical evaluation.
+- Froze the R5-G three-sensor generalization audit at `nu=0.005`. The checkpoint is evaluated without
+  optimization on fresh seeds and unseen grids. Added separate strict-certificate metrics and a deliberately
+  tolerant practical gate so isolated tail points do not alone block empirical evaluation.
 - Implemented the evaluation-only G1 runner for arbitrary unseen grids, immutable checkpoint hashing,
   validation-gated locked-test access, refreshed final-checkpoint ablations, and reusable strict/practical
-  decision rules with regression tests for every frozen `nu`/sensor-count pair.
+  decision rules with regression tests for the frozen three-sensor protocol.
 - Completed G1 on the RTX 2060. Fresh validation and locked test both passed the strict and practical
   gates on every declared grid, including unseen grids 47, 95, 191, and 255; all sampled contraction
   margins remained positive and the frozen checkpoint hash was unchanged.

@@ -21,11 +21,9 @@ from .direct_fiber import (
 from .grid import AllenCahnGrid
 from .generalization import (
     PracticalGateThresholds,
-    adaptive_sensor_counts,
     generalization_gates,
     practical_rate_gate,
     strict_rate_gate,
-    unstable_mode_count,
 )
 from .linearization import (
     allen_cahn_jacobian,
@@ -108,7 +106,6 @@ __all__ = [
     "allen_cahn_energy",
     "allen_cahn_jacobian",
     "allen_cahn_rhs",
-    "adaptive_sensor_counts",
     "audit_certificate",
     "audit_high_frequency_tail",
     "buffered_contraction_cvar",
@@ -158,6 +155,5 @@ __all__ = [
     "spectral_product",
     "strict_rate_gate",
     "symmetric_allen_cahn_margin",
-    "unstable_mode_count",
     "unstable_modal_system",
 ]

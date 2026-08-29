@@ -21,7 +21,7 @@ validation seed 1871 和 locked test seed 1901。严格全点门和宽松实用�
 
 这将原来的“已消费校准集上可用”升级为：在声明的有限状态--误差分布、有限轨迹时段和本轮
 半离散网格集合上，存在独立样本外收缩证据，并且同一共享模型能直接提升到未参与训练的网格。
-它仍不是连续 PDE 紧集上的统一定理，也不回答其他扩散系数和自适应传感器数量的问题。
+它仍不是连续 PDE 紧集上的统一定理；其他扩散系数与传感器数量不在本实验范围内。
 
 ## Fresh validation
 
@@ -64,10 +64,9 @@ seed 1901；每个网格 8192 个 collocation。`n=191,255` 是未训练的网�
 
 本轮只覆盖 `nu=0.005`、固定三传感器几何、当前低模态有限域和 `t in [0,1]`。未见网格通过
 证明了离散提升能力，但有限的五张 test 网格不能替代网格一致解析估计。更高频、多界面、长
-轨迹、噪声、传感器偏移和不同 `nu` 仍属于后续 G2/G3。
+轨迹、噪声和传感器偏移没有纳入本轮结论。
 
 ## 远程原始输出
 
 - validation：`/home/wjj/work/wt/phd-project1-codex/tmp/r5-route-worktrees/adaptive-sensor-generalization/out/2026-08-29-15-11-r5-g-validation-fe785b5/`
 - locked test：`/home/wjj/work/wt/phd-project1-codex/tmp/r5-route-worktrees/adaptive-sensor-generalization/out/2026-08-29-15-14-r5-g-locked-test-fe785b5/`
-

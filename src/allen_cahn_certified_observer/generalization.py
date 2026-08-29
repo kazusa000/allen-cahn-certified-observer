@@ -1,4 +1,4 @@
-"""Decision rules for adaptive-sensor generalization audits."""
+"""Decision rules for the frozen three-sensor generalization audit."""
 
 from __future__ import annotations
 
@@ -22,26 +22,6 @@ class PracticalGateThresholds:
 
     def to_dict(self) -> dict[str, float]:
         return asdict(self)
-
-
-def unstable_mode_count(nu: float) -> int:
-    """Return the number of positive zero-state Allen--Cahn modal rates."""
-
-    if not np.isfinite(nu) or nu <= 0.0:
-        raise ValueError("nu must be a positive finite scalar")
-    count = 0
-    mode = 1
-    while 1.0 - nu * (mode * np.pi) ** 2 > 0.0:
-        count += 1
-        mode += 1
-    return count
-
-
-def adaptive_sensor_counts(nu: float) -> tuple[int, int]:
-    """Return primary and positive-control sensor counts for one ``nu``."""
-
-    unstable = unstable_mode_count(nu)
-    return max(1, unstable - 1), unstable
 
 
 def strict_rate_gate(summary: dict[str, float | int]) -> dict[str, bool]:
@@ -185,4 +165,3 @@ def _finite_rate_summary(summary: dict[str, float | int]) -> bool:
         "requested_rate_fraction",
     )
     return bool(all(np.isfinite(float(summary[name])) for name in names))
-
