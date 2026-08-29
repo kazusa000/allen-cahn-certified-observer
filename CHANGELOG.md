@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Froze a new evaluation-only state-distribution OOD audit for the existing
+  `nu=0.005`, three-sensor checkpoint. The prior IID validation and locked-test
+  conclusion remains unchanged; the new audit separately covers frequency,
+  localization, interface complexity, and initial-error magnitude.
+
 - Froze the R5-G three-sensor generalization audit at `nu=0.005`. The checkpoint is evaluated without
   optimization on fresh seeds and unseen grids. Added separate strict-certificate metrics and a deliberately
   tolerant practical gate so isolated tail points do not alone block empirical evaluation.

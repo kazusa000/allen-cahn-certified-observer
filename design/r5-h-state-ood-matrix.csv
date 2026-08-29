@@ -1,0 +1,16 @@
+family,severity,parameter,grid_sizes,collocation_per_grid,trajectories_per_grid,seed,status
+truth_high_frequency,1,modes-5-8,"63;191",2048,8,1971,frozen
+truth_high_frequency,2,modes-9-12,"63;191",2048,8,1971,frozen
+truth_high_frequency,3,modes-13-16,"63;191",2048,8,1971,frozen
+error_high_frequency,1,modes-5-8,"63;191",2048,8,1971,frozen
+error_high_frequency,2,modes-9-12,"63;191",2048,8,1971,frozen
+error_high_frequency,3,modes-13-16,"63;191",2048,8,1971,frozen
+localized_pulse,1,width-0.20,"63;191",2048,8,1971,frozen
+localized_pulse,2,width-0.10,"63;191",2048,8,1971,frozen
+localized_pulse,3,width-0.05,"63;191",2048,8,1971,frozen
+multiple_interfaces,1,interfaces-1,"63;191",2048,8,1971,frozen
+multiple_interfaces,2,interfaces-2,"63;191",2048,8,1971,frozen
+multiple_interfaces,3,interfaces-3,"63;191",2048,8,1971,frozen
+large_initial_error,1,mass-radius-0.40,"63;191",2048,8,1971,frozen
+large_initial_error,2,mass-radius-0.80,"63;191",2048,8,1971,frozen
+large_initial_error,3,mass-radius-1.20,"63;191",2048,8,1971,frozen
