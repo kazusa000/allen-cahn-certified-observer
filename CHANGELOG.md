@@ -6,6 +6,9 @@
   without optimization on fresh seeds and unseen grids, while later parameter experiments use one fewer
   sensor than the corresponding number of unstable modes. Added separate strict-certificate metrics and
   a deliberately tolerant practical gate so isolated tail points do not alone block empirical evaluation.
+- Implemented the evaluation-only G1 runner for arbitrary unseen grids, immutable checkpoint hashing,
+  validation-gated locked-test access, refreshed final-checkpoint ablations, and reusable strict/practical
+  decision rules with regression tests for every frozen `nu`/sensor-count pair.
 - Renamed the Project 1 experiment entry to `03-allen-cahn-direct-contraction-observer` so the
   repository name matches the evidence-supported direct-contraction route rather than implying a
   completed global certificate.

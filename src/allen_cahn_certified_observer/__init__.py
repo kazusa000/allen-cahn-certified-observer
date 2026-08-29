@@ -19,6 +19,14 @@ from .direct_fiber import (
     reconstruct_physical_modes,
 )
 from .grid import AllenCahnGrid
+from .generalization import (
+    PracticalGateThresholds,
+    adaptive_sensor_counts,
+    generalization_gates,
+    practical_rate_gate,
+    strict_rate_gate,
+    unstable_mode_count,
+)
 from .linearization import (
     allen_cahn_jacobian,
     incremental_remainder,
@@ -92,6 +100,7 @@ __all__ = [
     "NullspaceCertificate",
     "ModalInjectionDesign",
     "ObserverRollout",
+    "PracticalGateThresholds",
     "PilotCase",
     "StateConditionedLinearCorrection",
     "UnstableModalSystem",
@@ -99,6 +108,7 @@ __all__ = [
     "allen_cahn_energy",
     "allen_cahn_jacobian",
     "allen_cahn_rhs",
+    "adaptive_sensor_counts",
     "audit_certificate",
     "audit_high_frequency_tail",
     "buffered_contraction_cvar",
@@ -111,6 +121,7 @@ __all__ = [
     "fit_state_conditioned_linear_correction",
     "finite_horizon_transient_amplification",
     "generate_pilot_cases",
+    "generalization_gates",
     "incremental_remainder",
     "linearized_error_matrix",
     "lmi_modal_injection",
@@ -129,6 +140,7 @@ __all__ = [
     "partition_samples",
     "physical_modal_coordinates",
     "physical_modal_injection",
+    "practical_rate_gate",
     "project_physical_modal_adversaries_",
     "summarize_local_region",
     "transition_counts",
@@ -144,6 +156,8 @@ __all__ = [
     "solve_allen_cahn",
     "split_low_tail",
     "spectral_product",
+    "strict_rate_gate",
     "symmetric_allen_cahn_margin",
+    "unstable_mode_count",
     "unstable_modal_system",
 ]
