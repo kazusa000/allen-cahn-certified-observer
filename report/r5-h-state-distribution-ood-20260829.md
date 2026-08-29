@@ -104,7 +104,7 @@ R5-G 仍作为独立结论保留：冻结模型在原声明分布的 fresh valid
   `22ac62ee26cf9116ff6197ee05587b60d59d26e6fb2e478ecead6dba8ee57d13`。
 
 远程原始输出：
-`/home/wjj/work/wt/phd-project1-codex/tmp/r5-route-worktrees/adaptive-sensor-generalization/out/2026-08-29-17-47-r5-h-state-ood-807b57d/`
+`/home/wjj/work/main/phd/project/project1/experiment/03-allen-cahn-direct-contraction-observer/out/2026-08-29-17-47-r5-h-state-ood-807b57d/`
 
 本地副本：
-`/Users/wjj/work/wt/phd-project1-codex/tmp/r5-route-worktrees/adaptive-sensor-generalization/out/2026-08-29-17-47-r5-h-state-ood-807b57d/`
+`/Users/wjj/work/main/phd/project/project1/experiment/03-allen-cahn-direct-contraction-observer/out/2026-08-29-17-47-r5-h-state-ood-807b57d/`

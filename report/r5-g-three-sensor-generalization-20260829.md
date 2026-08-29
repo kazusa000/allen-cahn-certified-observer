@@ -66,7 +66,7 @@ seed 1901；每个网格 8192 个 collocation。`n=191,255` 是未训练的网�
 证明了离散提升能力，但有限的五张 test 网格不能替代网格一致解析估计。更高频、多界面、长
 轨迹、噪声和传感器偏移没有纳入本轮结论。
 
-## 远程原始输出
+## 主实验原始输出
 
-- validation：`/home/wjj/work/wt/phd-project1-codex/tmp/r5-route-worktrees/adaptive-sensor-generalization/out/2026-08-29-15-11-r5-g-validation-fe785b5/`
-- locked test：`/home/wjj/work/wt/phd-project1-codex/tmp/r5-route-worktrees/adaptive-sensor-generalization/out/2026-08-29-15-14-r5-g-locked-test-fe785b5/`
+- validation：`/home/wjj/work/main/phd/project/project1/experiment/03-allen-cahn-direct-contraction-observer/out/2026-08-29-15-11-r5-g-validation-fe785b5/`
+- locked test：`/home/wjj/work/main/phd/project/project1/experiment/03-allen-cahn-direct-contraction-observer/out/2026-08-29-15-14-r5-g-locked-test-fe785b5/`
