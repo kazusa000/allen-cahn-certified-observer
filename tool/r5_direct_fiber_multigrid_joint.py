@@ -39,8 +39,6 @@ COLLOCATION_MODE_COUNT = 12
 ALPHA = 0.1 * NU_VALUE * np.pi**2
 OUTPUT_TIMES = np.linspace(0.0, 1.0, 51)
 MODEL_SEEDS = (1301, 1302, 1303)
-EXPERIMENT_KIND = "r5-direct-fiber-multigrid-joint"
-CHECKPOINT_PREFIX = "direct-fiber"
 THREE_SENSOR_INTERVALS = np.asarray(
     [
         [1.0 / 6.0, 7.0 / 30.0],
@@ -797,18 +795,14 @@ def _train_seed(
         "gates": gates,
     }
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = checkpoint_dir / f"{CHECKPOINT_PREFIX}__seed-{seed}.pt"
+    checkpoint = checkpoint_dir / f"direct-fiber__seed-{seed}.pt"
     torch.save(
         {
-            "kind": EXPERIMENT_KIND,
+            "kind": "r5-direct-fiber-multigrid-joint",
             "seed": seed,
             "nu": NU_VALUE,
             "grid_sizes": GRID_SIZES,
             "sensor_intervals": THREE_SENSOR_INTERVALS,
-            "alpha": ALPHA,
-            "low_mode_count": LOW_MODE_COUNT,
-            "condition_mode_count": CONDITION_MODE_COUNT,
-            "collocation_mode_count": COLLOCATION_MODE_COUNT,
             "base_gain": base_gain,
             "base_transform": base_transform,
             "gain_state_dict": gain.state_dict(),

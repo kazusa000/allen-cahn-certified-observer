@@ -122,14 +122,6 @@
 - 建立实验工程。
 # Changelog
 
-## 2026-08-29 - Parameterized q=2/q=1 generalization route
-
-- Added frozen adaptive-sensor families for `0.0075 -> 0.010` and
-  `0.015 -> 0.020` zero-shot parameter transfer.
-- Added train-only five-seed entry points and evaluation-only validation/test
-  auditing with the relaxed 3/5 practical unlock rule.
-- Kept the existing q=3 training defaults and checkpoint naming unchanged.
-
 ## 2026-08-24 — Pre-register low-mode adversarial repair
 
 - Added a targeted repair plan using deterministic per-epoch resampling,

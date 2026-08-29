@@ -6,11 +6,6 @@ from .certificate import (
     NullspaceCertificate,
     audit_certificate,
 )
-from .adaptive_sensor import (
-    ADAPTIVE_SENSOR_FAMILIES,
-    AdaptiveSensorFamily,
-    adaptive_sensor_family,
-)
 from .dataset import PilotCase, generate_pilot_cases, noise_waveform
 from .direct_fiber import (
     buffered_contraction_cvar,
@@ -106,8 +101,6 @@ __all__ = [
     "ModalInjectionDesign",
     "ObserverRollout",
     "PracticalGateThresholds",
-    "AdaptiveSensorFamily",
-    "ADAPTIVE_SENSOR_FAMILIES",
     "PilotCase",
     "StateConditionedLinearCorrection",
     "UnstableModalSystem",
@@ -116,7 +109,6 @@ __all__ = [
     "allen_cahn_jacobian",
     "allen_cahn_rhs",
     "adaptive_sensor_counts",
-    "adaptive_sensor_family",
     "audit_certificate",
     "audit_high_frequency_tail",
     "buffered_contraction_cvar",
