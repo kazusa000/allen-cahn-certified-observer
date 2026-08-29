@@ -131,10 +131,6 @@
 - Kept the existing q=3 training defaults and checkpoint naming unchanged.
 - Generalized the authoritative low-mode adversarial-repair stage to the q=2
   and q=1 families while keeping unseen-parameter validation locked.
-- Completed G2 on the RTX 2060. Both q=2 and q=1 model families failed the
-  frozen zero-shot practical gate at 0/5 seeds before and after adversarial
-  repair, so both locked tests remained unread; recorded the bounded failure
-  conclusion and the feasible q=N_u linear controls.
 
 ## 2026-08-24 — Pre-register low-mode adversarial repair
 
