@@ -198,6 +198,9 @@
 - Added the frozen R5-H evaluation-only state-distribution OOD matrix for the existing `nu=0.005`,
   three-sensor checkpoint. The audit separates the prior IID generalization conclusion from high-frequency
   truth/error, localized-pulse, multiple-interface, and large-initial-error robustness envelopes.
+- Completed the RTX 2060 R5-H matrix. All sampled contraction margins remained positive and 14 of 15
+  OOD cells passed both decision levels; the sole miss was the pre-registered relative-baseline terminal
+  median gate for mode-9--12 initial error, while mode-13--16 error passed because of stronger diffusion.
 
 - Implemented the pre-registered T0-preconditioned conditional invertible residual transform, fresh
   train/validation/test splits, normalized-coordinate nonlinearity gates, and a dedicated joint-training
