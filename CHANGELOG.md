@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Froze the R5-G adaptive-sensor generalization audit. The current three-sensor checkpoint is evaluated
+  without optimization on fresh seeds and unseen grids, while later parameter experiments use one fewer
+  sensor than the corresponding number of unstable modes. Added separate strict-certificate metrics and
+  a deliberately tolerant practical gate so isolated tail points do not alone block empirical evaluation.
 - Renamed the Project 1 experiment entry to `03-allen-cahn-direct-contraction-observer` so the
   repository name matches the evidence-supported direct-contraction route rather than implying a
   completed global certificate.
