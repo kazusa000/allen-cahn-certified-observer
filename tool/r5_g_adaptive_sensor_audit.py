@@ -78,6 +78,15 @@ def _load_checkpoint(
     }
     for name, value in expected.items():
         actual = payload.get(name)
+        if (
+            name == "collocation_mode_count"
+            and actual is None
+            and payload.get("kind")
+            == f"r5-g-adaptive-sensor-{family.name}-adversarial-repair"
+        ):
+            # Compatibility for the first repaired checkpoints, whose tensor
+            # dimensions are fully checked by state-dict loading below.
+            continue
         if name == "grid_sizes" and actual is not None:
             actual = tuple(actual)
         if actual != value:

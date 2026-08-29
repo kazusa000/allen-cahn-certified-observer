@@ -21,6 +21,7 @@ from allen_cahn_certified_observer import (
 )
 from r5_direct_fiber_multigrid_joint import (
     ALPHA,
+    COLLOCATION_MODE_COUNT,
     CONDITION_MODE_COUNT,
     GRID_SIZES,
     LOW_MODE_COUNT,
@@ -962,6 +963,7 @@ def _train_seed(
             "alpha": ALPHA,
             "low_mode_count": LOW_MODE_COUNT,
             "condition_mode_count": CONDITION_MODE_COUNT,
+            "collocation_mode_count": COLLOCATION_MODE_COUNT,
             "base_gain": base_gain,
             "base_transform": base_transform,
             "gain_state_dict": gain.state_dict(),

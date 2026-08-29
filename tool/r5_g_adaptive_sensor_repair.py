@@ -19,6 +19,7 @@ def configure_repair(family: object) -> None:
     repair.GRID_SIZES = TRAIN_GRIDS
     repair.LOW_MODE_COUNT = family.low_mode_count
     repair.CONDITION_MODE_COUNT = family.condition_mode_count
+    repair.COLLOCATION_MODE_COUNT = family.collocation_mode_count
     repair.ALPHA = 0.1 * family.train_nu * repair.np.pi**2
     repair.THREE_SENSOR_INTERVALS = family.primary_array()
     repair.INITIAL_CHECKPOINT_PREFIXES = (
