@@ -195,6 +195,13 @@
 
 ## Unreleased
 
+- Fast-forwarded the verified R5-G independent generalization and R5-H state-distribution OOD audits
+  into the main direct-contraction experiment while preserving their original commits and result hashes.
+- Reduced the active experiment surface to the direct-fiber training, adversarial repair, independent
+  generalization, and state-OOD chain. Superseded route-specific designs, entry points, tests, and the
+  early direct-contraction report were moved to a recoverable experiment-local trash directory; their
+  independent archived experiment histories remain unchanged.
+
 - Added the frozen R5-H evaluation-only state-distribution OOD matrix for the existing `nu=0.005`,
   three-sensor checkpoint. The audit separates the prior IID generalization conclusion from high-frequency
   truth/error, localized-pulse, multiple-interface, and large-initial-error robustness envelopes.
