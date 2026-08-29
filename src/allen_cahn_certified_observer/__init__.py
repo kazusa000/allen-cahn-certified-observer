@@ -82,6 +82,15 @@ from .spectral import (
     sampled_forced_tail_envelope,
     split_low_tail,
 )
+from .state_ood import (
+    STATE_OOD_FAMILIES,
+    STATE_OOD_SEVERITIES,
+    StateOODGateThresholds,
+    StateOODInitialPair,
+    state_ood_gates,
+    state_ood_initial_pairs,
+    state_ood_samples,
+)
 from .training import (
     StateConditionedLinearCorrection,
     fit_state_conditioned_linear_correction,
@@ -101,6 +110,10 @@ __all__ = [
     "PracticalGateThresholds",
     "PilotCase",
     "StateConditionedLinearCorrection",
+    "StateOODGateThresholds",
+    "StateOODInitialPair",
+    "STATE_OOD_FAMILIES",
+    "STATE_OOD_SEVERITIES",
     "UnstableModalSystem",
     "TailAudit",
     "allen_cahn_energy",
@@ -154,6 +167,9 @@ __all__ = [
     "split_low_tail",
     "spectral_product",
     "strict_rate_gate",
+    "state_ood_gates",
+    "state_ood_initial_pairs",
+    "state_ood_samples",
     "symmetric_allen_cahn_margin",
     "unstable_modal_system",
 ]

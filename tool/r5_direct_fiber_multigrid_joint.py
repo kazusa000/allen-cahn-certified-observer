@@ -453,6 +453,8 @@ def _rate_summary(rates: np.ndarray) -> dict[str, float | int]:
         "requested_rate": ALPHA,
         "requested_margin_min": float(np.min(margins)),
         "requested_margin_p01": float(np.quantile(margins, 0.01)),
+        "requested_margin_p05": float(np.quantile(margins, 0.05)),
+        "negative_margin_count": int(np.sum(margins < -1.0e-8)),
         "requested_rate_fraction": float(np.mean(margins >= -1.0e-8)),
     }
 

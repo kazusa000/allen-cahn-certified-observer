@@ -195,6 +195,10 @@
 
 ## Unreleased
 
+- Added the frozen R5-H evaluation-only state-distribution OOD matrix for the existing `nu=0.005`,
+  three-sensor checkpoint. The audit separates the prior IID generalization conclusion from high-frequency
+  truth/error, localized-pulse, multiple-interface, and large-initial-error robustness envelopes.
+
 - Implemented the pre-registered T0-preconditioned conditional invertible residual transform, fresh
   train/validation/test splits, normalized-coordinate nonlinearity gates, and a dedicated joint-training
   entry point while retaining the complete nonlinear target and the original four-term objective.
