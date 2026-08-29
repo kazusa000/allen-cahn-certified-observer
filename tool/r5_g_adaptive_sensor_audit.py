@@ -43,19 +43,13 @@ def _sha256(path: Path) -> str:
 
 
 def _checkpoint_paths(directory: Path, family: object) -> dict[int, Path]:
-    paths = {}
-    for seed in family.model_seeds:
-        candidates = (
-            directory / f"adaptive-{family.name}__seed-{seed}.pt",
-            directory / f"adaptive-{family.name}-repair__seed-{seed}.pt",
-        )
-        existing = [path for path in candidates if path.is_file()]
-        if len(existing) != 1:
-            raise FileNotFoundError(
-                f"expected one base or repaired checkpoint for seed {seed}, "
-                f"found {len(existing)}"
-            )
-        paths[seed] = existing[0]
+    paths = {
+        seed: directory / f"adaptive-{family.name}__seed-{seed}.pt"
+        for seed in family.model_seeds
+    }
+    missing = [str(path) for path in paths.values() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(f"missing checkpoints: {missing}")
     return paths
 
 
@@ -63,13 +57,8 @@ def _load_checkpoint(
     torch: object, path: Path, family: object, *, device: str
 ) -> tuple[object, object, dict[str, object]]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    allowed_kinds = {
-        f"r5-g-adaptive-sensor-{family.name}",
-        f"r5-g-adaptive-sensor-{family.name}-adversarial-repair",
-    }
-    if payload.get("kind") not in allowed_kinds:
-        raise RuntimeError(f"{path} has unexpected kind {payload.get('kind')!r}")
     expected = {
+        "kind": f"r5-g-adaptive-sensor-{family.name}",
         "nu": family.train_nu,
         "grid_sizes": (31, 63),
         "low_mode_count": family.low_mode_count,

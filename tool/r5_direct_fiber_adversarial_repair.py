@@ -50,9 +50,6 @@ TRAIN_TRAJECTORY_SEED = 2301
 RESAMPLE_SEED_BASE = 2401
 FORMAL_VALIDATION_SEED = 1871
 LOCKED_TEST_SEED = 1901
-INITIAL_CHECKPOINT_PREFIXES = ("direct-fiber", "direct-fiber-adversarial")
-REPAIR_CHECKPOINT_PREFIX = "direct-fiber-adversarial"
-REPAIR_KIND = "r5-direct-fiber-adversarial-repair"
 
 
 def _seed_for_epoch(model_seed: int, epoch: int, grid_size: int) -> int:
@@ -510,9 +507,9 @@ def _load_initialized_model(
 def _checkpoint_for_seed(directory: Path, seed: int) -> Path:
     """Resolve either an original formal or a prior repair checkpoint."""
 
-    candidates = tuple(
-        directory / f"{prefix}__seed-{seed}.pt"
-        for prefix in INITIAL_CHECKPOINT_PREFIXES
+    candidates = (
+        directory / f"direct-fiber__seed-{seed}.pt",
+        directory / f"direct-fiber-adversarial__seed-{seed}.pt",
     )
     existing = [path for path in candidates if path.is_file()]
     if len(existing) != 1:
@@ -951,17 +948,14 @@ def _train_seed(
         "gates": gates,
     }
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = checkpoint_dir / f"{REPAIR_CHECKPOINT_PREFIX}__seed-{seed}.pt"
+    checkpoint = checkpoint_dir / f"direct-fiber-adversarial__seed-{seed}.pt"
     torch.save(
         {
-            "kind": REPAIR_KIND,
+            "kind": "r5-direct-fiber-adversarial-repair",
             "seed": seed,
             "nu": NU_VALUE,
             "grid_sizes": GRID_SIZES,
             "sensor_intervals": THREE_SENSOR_INTERVALS,
-            "alpha": ALPHA,
-            "low_mode_count": LOW_MODE_COUNT,
-            "condition_mode_count": CONDITION_MODE_COUNT,
             "base_gain": base_gain,
             "base_transform": base_transform,
             "gain_state_dict": gain.state_dict(),
@@ -1181,7 +1175,7 @@ def run(
         test_evaluated = True
 
     return {
-        "kind": REPAIR_KIND,
+        "kind": "r5-direct-fiber-adversarial-repair",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "git_commit": _git_head(),
         "environment": {

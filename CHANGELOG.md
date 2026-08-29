@@ -129,8 +129,6 @@
 - Added train-only five-seed entry points and evaluation-only validation/test
   auditing with the relaxed 3/5 practical unlock rule.
 - Kept the existing q=3 training defaults and checkpoint naming unchanged.
-- Generalized the authoritative low-mode adversarial-repair stage to the q=2
-  and q=1 families while keeping unseen-parameter validation locked.
 
 ## 2026-08-24 — Pre-register low-mode adversarial repair
 
