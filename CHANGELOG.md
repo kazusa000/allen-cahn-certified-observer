@@ -9,6 +9,9 @@
 - Implemented the evaluation-only G1 runner for arbitrary unseen grids, immutable checkpoint hashing,
   validation-gated locked-test access, refreshed final-checkpoint ablations, and reusable strict/practical
   decision rules with regression tests for every frozen `nu`/sensor-count pair.
+- Completed G1 on the RTX 2060. Fresh validation and locked test both passed the strict and practical
+  gates on every declared grid, including unseen grids 47, 95, 191, and 255; all sampled contraction
+  margins remained positive and the frozen checkpoint hash was unchanged.
 - Renamed the Project 1 experiment entry to `03-allen-cahn-direct-contraction-observer` so the
   repository name matches the evidence-supported direct-contraction route rather than implying a
   completed global certificate.
