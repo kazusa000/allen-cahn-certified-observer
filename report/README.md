@@ -12,6 +12,8 @@
   余项的四网格审计。
 - `r5-k-diagonal-metric-feasibility-20260904.md`：保持三次项全局耗散的正对角度量
   可行性筛选。
+- `r5-l-sensor-gap-obstruction-20260904.md`：三传感器未观测间隙对固定增益、固定线性
+  坐标全状态收缩的结构障碍。
 
 拆分前的共享报告已移入 `../archive/report/r5-legacy/`。当前目录只保留本综合仓库仍直接负责的
 direct-fiber 路线报告。

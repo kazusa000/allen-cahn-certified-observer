@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Completed the exact-commit R5-L audit. The continuum internal sensor gap has
+  positive principal Allen--Cahn growth, grids 127 and 191 resolve the same
+  positive unobserved mode, and both frozen learned and Sylvester gains become
+  spectrally unstable for sensor-wall states within the prior amplitude bound.
+  Every pre-registered obstruction gate passed, while prior finite-distribution
+  generalization claims remain unchanged.
+
 - Pre-registered R5-L to test a sensor-support damping wall. The audit separates
   the bounded state-amplitude range from an asymptotic structural limit and asks
   whether unobserved spatial gaps make uniform all-state contraction impossible
