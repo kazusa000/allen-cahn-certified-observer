@@ -129,3 +129,12 @@ def test_identity_coordinate_audit_recovers_the_known_radial_defect() -> None:
     )
     expected_rate = mass_rate(torch, errors, expected_rhs, context["grid"].h)
     assert torch.allclose(arrays["actual_rate"], expected_rate, atol=1e-12, rtol=1e-12)
+    reconstructed_rate = (
+        arrays["dynamics__state_transport__rate"]
+        + arrays["linear_backbone_rate"]
+        + arrays["nonlinear_remainder_rate"]
+    )
+    assert torch.allclose(
+        arrays["actual_rate"], reconstructed_rate, atol=1e-12, rtol=1e-12
+    )
+    assert torch.max(arrays["rate_additivity_error"]).item() < 1e-12

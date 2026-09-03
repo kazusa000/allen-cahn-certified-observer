@@ -179,6 +179,7 @@ def _audit_batch(
         "nonlinear": pushed(zero_states, error_terms["nonlinear"]),
     }
     pushforward_sum = sum(pushforward.values())
+    linear_backbone = pushforward["diffusion"] + pushforward["linear_sensor"]
 
     same_target = same_form_target_components(
         torch,
@@ -237,6 +238,32 @@ def _audit_batch(
             same_defect["defect"] - source_sum,
             same_defect["defect"],
             grid_step,
+        ),
+        "linear_backbone_rate": mass_rate(
+            torch, transformed, linear_backbone, grid_step
+        ),
+        "linear_backbone_margin": mass_rate(
+            torch, transformed, linear_backbone, grid_step
+        )
+        - ALPHA,
+        "nonlinear_remainder_rate": mass_rate(
+            torch, transformed, pushforward["nonlinear"], grid_step
+        ),
+        "rate_additivity_error": torch.abs(
+            mass_rate(torch, transformed, transformed_rhs, grid_step)
+            - mass_rate(
+                torch,
+                transformed,
+                pushforward["state_transport"],
+                grid_step,
+            )
+            - mass_rate(torch, transformed, linear_backbone, grid_step)
+            - mass_rate(
+                torch,
+                transformed,
+                pushforward["nonlinear"],
+                grid_step,
+            )
         ),
     }
     for target_name, diagnostics in (
@@ -348,6 +375,18 @@ def _audit_model_grid(
         "source_reconstruction_relative_max": float(
             np.max(arrays["source_reconstruction_relative_error"])
         ),
+        "rate_additivity_absolute_max": float(np.max(arrays["rate_additivity_error"])),
+    }
+    transformed_structure = {
+        "linear_closed_loop_rate": _summary(arrays["linear_backbone_rate"]),
+        "linear_closed_loop_margin": _summary(arrays["linear_backbone_margin"]),
+        "nonlinear_remainder_rate": _summary(arrays["nonlinear_remainder_rate"]),
+        "linear_closed_loop_meets_requested_rate_fraction": float(
+            np.mean(arrays["linear_backbone_margin"] >= -1.0e-8)
+        ),
+        "nonlinear_remainder_dissipative_fraction": float(
+            np.mean(arrays["nonlinear_remainder_rate"] >= -1.0e-8)
+        ),
     }
     gates = {
         "actual_contraction": bool(np.min(arrays["actual_margin"]) >= -1.0e-8),
@@ -370,6 +409,7 @@ def _audit_model_grid(
         "same_form_nonlinear_target": same_target,
         "linear_target": linear_target,
         "pushforward_energy_rate_components": dynamics,
+        "exact_linear_backbone_plus_nonlinear_remainder": transformed_structure,
         "same_target_defect_sources": sources,
         "checks": checks,
         "gates": gates,
