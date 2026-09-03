@@ -6,6 +6,10 @@
   contraction metric. This structure keeps the transformed Allen--Cahn cubic
   term globally dissipative by construction while jointly designing the
   three-sensor linear output injection.
+- Recorded the initial CLARABEL solver failure as a pipeline failure rather
+  than a feasibility result. The revised screen isolates solver errors, logs
+  every condition-bound attempt, and uses SCS with an independent post-solve
+  eigenvalue check.
 - Froze R5-J as an evaluation-only transfer of the linear-PDE constrained
   Sylvester construction. Only the four unstable Allen--Cahn modes are shifted;
   the stable tail is preserved and exactly decoupled by a cross block. The

@@ -82,13 +82,39 @@ def _solve(
             derivative << -NORMALIZED_STRICTNESS * np.eye(grid.n),
         ],
     )
-    problem.solve(solver=solver)
+    solver_options: dict[str, object] = {}
+    if solver == "SCS":
+        solver_options = {
+            "eps": 1.0e-7,
+            "max_iters": 200_000,
+            "acceleration_lookback": 10,
+        }
+    try:
+        problem.solve(solver=solver, **solver_options)
+    except cp.error.SolverError as error:
+        return {
+            "condition_bound": float(condition_bound),
+            "solver": solver,
+            "solver_status": "solver_error",
+            "solver_error": str(error),
+            "feasible": False,
+        }
     attempt: dict[str, object] = {
         "condition_bound": float(condition_bound),
         "solver": solver,
         "solver_status": str(problem.status),
         "objective": (
             None if problem.value is None else float(problem.value)
+        ),
+        "solver_iterations": (
+            None
+            if problem.solver_stats.num_iters is None
+            else int(problem.solver_stats.num_iters)
+        ),
+        "solver_time_seconds": (
+            None
+            if problem.solver_stats.solve_time is None
+            else float(problem.solver_stats.solve_time)
         ),
         "feasible": False,
     }
@@ -208,6 +234,10 @@ def run(
     attempts = []
     selected = None
     for condition_bound in condition_bounds:
+        print(
+            f"solving condition_bound={condition_bound:g} with {solver}",
+            flush=True,
+        )
         attempt = _solve(
             grid,
             observation,
@@ -215,6 +245,11 @@ def run(
             solver=solver,
         )
         attempts.append(attempt)
+        print(
+            "status="
+            f"{attempt['solver_status']} feasible={attempt['feasible']}",
+            flush=True,
+        )
         if attempt["feasible"]:
             selected = attempt
             break
@@ -266,7 +301,7 @@ def main() -> None:
         nargs="+",
         default=CONDITION_BOUNDS,
     )
-    parser.add_argument("--solver", default="CLARABEL")
+    parser.add_argument("--solver", default="SCS")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.grid_size != 31:
