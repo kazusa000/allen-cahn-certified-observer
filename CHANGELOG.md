@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the R5-K deterministic feasibility screen for a positive diagonal
+  contraction metric. This structure keeps the transformed Allen--Cahn cubic
+  term globally dissipative by construction while jointly designing the
+  three-sensor linear output injection.
 - Froze R5-J as an evaluation-only transfer of the linear-PDE constrained
   Sylvester construction. Only the four unstable Allen--Cahn modes are shifted;
   the stable tail is preserved and exactly decoupled by a cross block. The
