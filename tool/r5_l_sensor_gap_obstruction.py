@@ -110,7 +110,7 @@ def _load_frozen_modal_gain(
     if not np.allclose(
         base,
         payload["base_gain"],
-        atol=1.0e-10,
+        atol=1.0e-7,
         rtol=1.0e-10,
     ):
         raise RuntimeError("checkpoint gain base is internally inconsistent")

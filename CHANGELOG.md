@@ -9,6 +9,10 @@
 - Implemented reusable sensor-gap, wall-state, frozen-Jacobian,
   modal-localization, and similarity-invariance diagnostics plus the frozen R5-L
   two-gain multigrid runner.
+- Recorded the first R5-L entry-point stop before any spectral computation: the
+  checkpoint stores the same base gain as float64 metadata and a float32 model
+  buffer. The read-only consistency tolerance now permits the measured 9.73e-9
+  representation difference without changing any scientific setting or gate.
 - Completed the R5-K exact-commit RTX 2060 screen. No positive diagonal
   metric/output-injection pair passed the original-scale eigenvalue audit from
   condition bound 4 through 1e6. Recorded this as a numerical feasibility
