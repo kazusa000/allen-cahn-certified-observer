@@ -6,6 +6,11 @@
   It exactly decomposes the mismatch to the old same-form Allen--Cahn target,
   separates energy-radial and tangential defect, and compares learned and fixed
   coordinates without retraining or consuming the locked test split.
+- Completed R5-I on the RTX 2060. The frozen learned coordinate retained positive
+  sampled contraction on all four grids, while the old target defect remained
+  large and only 53.85% tangential by pooled energy. A fixed-coordinate replay
+  supported an exact transformed linear-backbone-plus-nonlinear-remainder
+  formulation; no rotation target or retraining was started.
 
 - Froze a new evaluation-only state-distribution OOD audit for the existing
   `nu=0.005`, three-sensor checkpoint. The prior IID validation and locked-test
