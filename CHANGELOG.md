@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added the evaluation-only R5-I diagnostic for the frozen three-sensor model.
+  It exactly decomposes the mismatch to the old same-form Allen--Cahn target,
+  separates energy-radial and tangential defect, and compares learned and fixed
+  coordinates without retraining or consuming the locked test split.
+
 - Froze a new evaluation-only state-distribution OOD audit for the existing
   `nu=0.005`, three-sensor checkpoint. The prior IID validation and locked-test
   conclusion remains unchanged; the new audit separately covers frequency,
