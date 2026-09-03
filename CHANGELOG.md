@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Froze R5-J as an evaluation-only transfer of the linear-PDE constrained
+  Sylvester construction. Only the four unstable Allen--Cahn modes are shifted;
+  the stable tail is preserved and exactly decoupled by a cross block. The
+  transformed system keeps its true nonlinear remainder and uses tolerant
+  IID/OOD gates before any adversarial proof-candidate search.
 - Added the evaluation-only R5-I diagnostic for the frozen three-sensor model.
   It exactly decomposes the mismatch to the old same-form Allen--Cahn target,
   separates energy-radial and tangential defect, and compares learned and fixed

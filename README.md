@@ -12,6 +12,8 @@ High-accuracy Allen-Cahn solver and direct-contraction nonlinear observer correc
 - `tool/r5_h_state_ood_audit.py`：状态分布外泛化审计；
 - `tool/r5_i_backstepping_nonlinear_remainder_audit.py`：冻结模型的预设目标缺陷与
   真实非线性余项诊断。
+- `tool/r5_j_sylvester_remainder_bridge.py`：精确 Sylvester 线性骨架与真实非线性
+  余项的 IID/OOD 泛化审计。
 
 早期预设目标、局部证书、低频尾项和传感器数量路线已有独立归档实验，不再在本仓库重复
 维护。2026-08-29 整理出的本地可恢复副本位于

@@ -91,6 +91,11 @@ from .state_ood import (
     state_ood_initial_pairs,
     state_ood_samples,
 )
+from .sylvester_bridge import (
+    SylvesterRemainderBridge,
+    build_sylvester_remainder_bridge,
+    exact_remainder_batch,
+)
 from .training import (
     StateConditionedLinearCorrection,
     fit_state_conditioned_linear_correction,
@@ -112,6 +117,7 @@ __all__ = [
     "StateConditionedLinearCorrection",
     "StateOODGateThresholds",
     "StateOODInitialPair",
+    "SylvesterRemainderBridge",
     "STATE_OOD_FAMILIES",
     "STATE_OOD_SEVERITIES",
     "UnstableModalSystem",
@@ -126,8 +132,10 @@ __all__ = [
     "build_low_modal_conditional_residual_transform",
     "build_preconditioned_conditional_residual_transform",
     "build_projected_constant_gain",
+    "build_sylvester_remainder_bridge",
     "dirichlet_laplacian_rates",
     "dirichlet_sine_basis",
+    "exact_remainder_batch",
     "fit_state_conditioned_linear_correction",
     "finite_horizon_transient_amplification",
     "generate_pilot_cases",
