@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Pre-registered R5-L to test a sensor-support damping wall. The audit separates
+  the bounded state-amplitude range from an asymptotic structural limit and asks
+  whether unobserved spatial gaps make uniform all-state contraction impossible
+  for every fixed linear coordinate.
 - Completed the R5-K exact-commit RTX 2060 screen. No positive diagonal
   metric/output-injection pair passed the original-scale eigenvalue audit from
   condition bound 4 through 1e6. Recorded this as a numerical feasibility
