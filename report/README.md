@@ -8,6 +8,10 @@
   大初始误差状态分布外审计。
 - `r5-i-backstepping-nonlinear-remainder-20260903.md`：解释预设非线性目标失配，并检验
   “线性闭环骨架 + 真实非线性余项”的替代结构。
+- `r5-j-sylvester-remainder-bridge-20260903.md`：精确 Sylvester 线性骨架与真实非线性
+  余项的四网格审计。
+- `r5-k-diagonal-metric-feasibility-20260904.md`：保持三次项全局耗散的正对角度量
+  可行性筛选。
 
 拆分前的共享报告已移入 `../archive/report/r5-legacy/`。当前目录只保留本综合仓库仍直接负责的
 direct-fiber 路线报告。

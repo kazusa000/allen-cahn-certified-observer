@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Completed the R5-K exact-commit RTX 2060 screen. No positive diagonal
+  metric/output-injection pair passed the original-scale eigenvalue audit from
+  condition bound 4 through 1e6. Recorded this as a numerical feasibility
+  failure rather than an analytic impossibility theorem, and reserved the
+  sensor-gap obstruction for a separate follow-up.
 - Added the R5-K deterministic feasibility screen for a positive diagonal
   contraction metric. This structure keeps the transformed Allen--Cahn cubic
   term globally dissipative by construction while jointly designing the
