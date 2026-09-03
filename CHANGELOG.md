@@ -7,6 +7,12 @@
   the stable tail is preserved and exactly decoupled by a cross block. The
   transformed system keeps its true nonlinear remainder and uses tolerant
   IID/OOD gates before any adversarial proof-candidate search.
+- Completed R5-J on the RTX 2060. The linear conjugacy held to operator-level
+  numerical precision, but the transformed cubic remainder destroyed practical
+  contraction: only 82.8%--86.6% of IID and 77.1%--84.1% of OOD samples had
+  nonnegative requested-rate margins. The frozen learned coordinate retained
+  100% positive margins on the same samples, so no adversarial search or
+  Sylvester-anchored correction was started.
 - Added the evaluation-only R5-I diagnostic for the frozen three-sensor model.
   It exactly decomposes the mismatch to the old same-form Allen--Cahn target,
   separates energy-radial and tangential defect, and compares learned and fixed

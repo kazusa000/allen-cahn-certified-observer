@@ -256,6 +256,13 @@ def build_sylvester_remainder_bridge(
     observability_singular_values = np.linalg.svd(
         observability, compute_uv=False
     )
+    full_observation_residual = float(
+        np.linalg.norm(
+            observation_matrix @ inverse_coordinate - observation_matrix,
+            ord="fro",
+        )
+        / max(float(np.linalg.norm(observation_matrix, ord="fro")), 1.0e-30)
+    )
     inverse_singular_values = np.linalg.svd(
         inverse_coordinate, compute_uv=False
     )
@@ -266,6 +273,9 @@ def build_sylvester_remainder_bridge(
         "low_observability_rank": int(np.linalg.matrix_rank(observability)),
         "low_observability_min_singular_value": float(
             observability_singular_values[-1]
+        ),
+        "full_observation_preservation_relative_residual": (
+            full_observation_residual
         ),
         "low_primal_relative_residual": _relative_matrix_residual(
             low_closed_loop @ inverse_low - inverse_low @ low_target,

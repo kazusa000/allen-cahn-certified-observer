@@ -32,6 +32,10 @@ def test_sylvester_bridge_exactly_conjugates_the_linear_closed_loop(
 
     assert diagnostics["positive_linear_mode_count"] == 4
     assert diagnostics["low_observability_rank"] == 4
+    assert diagnostics["low_constraint_relative_residual"] < 1.0e-12
+    assert np.isfinite(
+        diagnostics["full_observation_preservation_relative_residual"]
+    )
     assert diagnostics["low_primal_relative_residual"] < 1.0e-12
     assert diagnostics["full_modal_relative_residual"] < 1.0e-12
     assert diagnostics["full_physical_relative_residual"] < 1.0e-12
